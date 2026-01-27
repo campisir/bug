@@ -36,20 +36,49 @@ export class FairyStockfishEngine {
     }
     async setPosition(fen, moves = []) {
         const movesStr = moves.length > 0 ? ` moves ${moves.join(' ')}` : '';
+        console.log('[UCI] Setting position:', fen);
+        if (moves.length > 0) {
+            console.log('[UCI] With moves:', moves);
+        }
         this.sendCommand(`position fen ${fen}${movesStr}`);
         await this.isReady();
     }
     async getBestMove(timeMs) {
         return new Promise((resolve, reject) => {
+            console.log(`[UCI] Requesting best move (${timeMs}ms)`);
             this.sendCommand(`go movetime ${timeMs}`);
             this.waitForResponse('bestmove', (response) => {
                 const match = response.match(/bestmove\s+(\S+)/);
                 if (match) {
                     const moveStr = match[1];
-                    resolve(this.parseMove(moveStr));
+                    const parsedMove = this.parseMove(moveStr);
+                    console.log('[UCI] Best move received:', moveStr, '→', parsedMove);
+                    resolve(parsedMove);
                 }
                 else {
                     reject(new Error('Failed to parse best move'));
+                }
+            });
+        });
+    }
+    async getEvaluation(depth) {
+        return new Promise((resolve, reject) => {
+            let lastInfo = null;
+            const infoHandler = (info) => {
+                lastInfo = info;
+            };
+            // Temporarily capture info updates
+            const originalCallback = this.analysisCallback;
+            this.analysisCallback = infoHandler;
+            this.sendCommand(`go depth ${depth}`);
+            this.waitForResponse('bestmove', () => {
+                this.analysisCallback = originalCallback;
+                if (lastInfo) {
+                    console.log('[UCI] Evaluation at depth', depth, '→ score:', lastInfo.score);
+                    resolve(lastInfo);
+                }
+                else {
+                    reject(new Error('No evaluation received'));
                 }
             });
         });
@@ -98,6 +127,7 @@ export class FairyStockfishEngine {
         });
     }
     async setOptions(options) {
+        console.log('[UCI] Setting options:', options);
         for (const [name, value] of Object.entries(options)) {
             this.sendCommand(`setoption name ${name} value ${value}`);
         }
@@ -145,15 +175,19 @@ export class FairyStockfishEngine {
     }
     parseInfo(line) {
         const depth = this.extractValue(line, 'depth');
-        const score = this.extractValue(line, 'score cp') || this.extractValue(line, 'score mate');
+        const cpScore = this.extractValue(line, 'score cp');
+        const mateScore = this.extractValue(line, 'score mate');
         const nodes = this.extractValue(line, 'nodes');
         const time = this.extractValue(line, 'time');
         const pvMatch = line.match(/pv (.+)$/);
         const pv = pvMatch ? pvMatch[1].split(' ') : [];
+        const isMate = mateScore !== null;
+        const score = isMate ? mateScore : cpScore;
         if (depth !== null && score !== null) {
             return {
                 depth,
                 score,
+                isMate,
                 nodes: nodes || 0,
                 time: time || 0,
                 pv,

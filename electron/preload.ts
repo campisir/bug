@@ -7,6 +7,15 @@ export interface EngineMove {
   drop?: string;
 }
 
+export interface EngineInfo {
+  depth: number;
+  score: number;
+  isMate: boolean;
+  pv: string[];
+  nodes: number;
+  time: number;
+}
+
 /**
  * Preload Script
  * 
@@ -19,6 +28,7 @@ export interface ElectronAPI {
     initialize: (engineId: string, enginePath: string) => Promise<void>;
     setPosition: (engineId: string, fen: string, moves?: string[]) => Promise<void>;
     getBestMove: (engineId: string, timeMs: number) => Promise<EngineMove>;
+    getEvaluation: (engineId: string, depth: number) => Promise<EngineInfo>;
     setOptions: (engineId: string, options: Record<string, string | number>) => Promise<void>;
     shutdown: (engineId: string) => Promise<void>;
   };
@@ -35,6 +45,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     
     getBestMove: (engineId: string, timeMs: number) => 
       ipcRenderer.invoke('engine:getBestMove', engineId, timeMs),
+    
+    getEvaluation: (engineId: string, depth: number) =>
+      ipcRenderer.invoke('engine:getEvaluation', engineId, depth),
     
     setOptions: (engineId: string, options: Record<string, string | number>) => 
       ipcRenderer.invoke('engine:setOptions', engineId, options),

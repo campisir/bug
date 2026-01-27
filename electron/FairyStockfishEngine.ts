@@ -10,6 +10,7 @@ export interface EngineMove {
 export interface EngineInfo {
   depth: number;
   score: number;
+  isMate: boolean; // true if score is mate-in-X, false if centipawn eval
   pv: string[];
   nodes: number;
   time: number;
@@ -19,6 +20,7 @@ export interface IChessEngine {
   initialize(): Promise<void>;
   setPosition(fen: string, moves?: string[]): Promise<void>;
   getBestMove(timeMs: number): Promise<EngineMove>;
+  getEvaluation(depth: number): Promise<EngineInfo>;
   startAnalysis(callback: (info: EngineInfo) => void): void;
   stopAnalysis(): Promise<void>;
   sendCommand(command: string): void;
@@ -73,21 +75,54 @@ export class FairyStockfishEngine implements IChessEngine {
 
   async setPosition(fen: string, moves: string[] = []): Promise<void> {
     const movesStr = moves.length > 0 ? ` moves ${moves.join(' ')}` : '';
+    console.log('[UCI] Setting position:', fen);
+    if (moves.length > 0) {
+      console.log('[UCI] With moves:', moves);
+    }
     this.sendCommand(`position fen ${fen}${movesStr}`);
     await this.isReady();
   }
 
   async getBestMove(timeMs: number): Promise<EngineMove> {
     return new Promise((resolve, reject) => {
+      console.log(`[UCI] Requesting best move (${timeMs}ms)`);
       this.sendCommand(`go movetime ${timeMs}`);
       
       this.waitForResponse('bestmove', (response) => {
         const match = response.match(/bestmove\s+(\S+)/);
         if (match) {
           const moveStr = match[1];
-          resolve(this.parseMove(moveStr));
+          const parsedMove = this.parseMove(moveStr);
+          console.log('[UCI] Best move received:', moveStr, '→', parsedMove);
+          resolve(parsedMove);
         } else {
           reject(new Error('Failed to parse best move'));
+        }
+      });
+    });
+  }
+
+  async getEvaluation(depth: number): Promise<EngineInfo> {
+    return new Promise((resolve, reject) => {
+      let lastInfo: EngineInfo | null = null;
+      
+      const infoHandler = (info: EngineInfo) => {
+        lastInfo = info;
+      };
+      
+      // Temporarily capture info updates
+      const originalCallback = this.analysisCallback;
+      this.analysisCallback = infoHandler;
+      
+      this.sendCommand(`go depth ${depth}`);
+      
+      this.waitForResponse('bestmove', () => {
+        this.analysisCallback = originalCallback;
+        if (lastInfo) {
+          console.log('[UCI] Evaluation at depth', depth, '→ score:', lastInfo.score);
+          resolve(lastInfo);
+        } else {
+          reject(new Error('No evaluation received'));
         }
       });
     });
@@ -143,6 +178,7 @@ export class FairyStockfishEngine implements IChessEngine {
   }
 
   async setOptions(options: Record<string, string | number>): Promise<void> {
+    console.log('[UCI] Setting options:', options);
     for (const [name, value] of Object.entries(options)) {
       this.sendCommand(`setoption name ${name} value ${value}`);
     }
@@ -200,16 +236,21 @@ export class FairyStockfishEngine implements IChessEngine {
 
   private parseInfo(line: string): EngineInfo | null {
     const depth = this.extractValue(line, 'depth');
-    const score = this.extractValue(line, 'score cp') || this.extractValue(line, 'score mate');
+    const cpScore = this.extractValue(line, 'score cp');
+    const mateScore = this.extractValue(line, 'score mate');
     const nodes = this.extractValue(line, 'nodes');
     const time = this.extractValue(line, 'time');
     const pvMatch = line.match(/pv (.+)$/);
     const pv = pvMatch ? pvMatch[1].split(' ') : [];
 
+    const isMate = mateScore !== null;
+    const score = isMate ? mateScore : cpScore;
+
     if (depth !== null && score !== null) {
       return {
         depth,
         score,
+        isMate,
         nodes: nodes || 0,
         time: time || 0,
         pv,

@@ -32,6 +32,12 @@ class EngineManager {
             throw new Error(`Engine ${engineId} not initialized`);
         return await engine.getBestMove(timeMs);
     }
+    async getEvaluation(engineId, depth) {
+        const engine = this.engines.get(engineId);
+        if (!engine)
+            throw new Error(`Engine ${engineId} not initialized`);
+        return await engine.getEvaluation(depth);
+    }
     async setOptions(engineId, options) {
         const engine = this.engines.get(engineId);
         if (!engine)
@@ -74,6 +80,9 @@ export function registerEngineHandlers() {
     });
     ipcMain.handle('engine:getBestMove', async (_event, engineId, timeMs) => {
         return await engineManager.getBestMove(engineId, timeMs);
+    });
+    ipcMain.handle('engine:getEvaluation', async (_event, engineId, depth) => {
+        return await engineManager.getEvaluation(engineId, depth);
     });
     ipcMain.handle('engine:setOptions', async (_event, engineId, options) => {
         await engineManager.setOptions(engineId, options);

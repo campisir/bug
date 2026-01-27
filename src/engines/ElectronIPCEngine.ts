@@ -27,6 +27,10 @@ export class ElectronIPCEngine implements IChessEngine {
     return await window.electronAPI.engine.getBestMove(this.engineId, timeMs);
   }
 
+  async getEvaluation(depth: number): Promise<EngineInfo> {
+    return await window.electronAPI.engine.getEvaluation(this.engineId, depth);
+  }
+
   startAnalysis(_callback: (info: EngineInfo) => void): void {
     // TODO: Implement analysis via IPC if needed
     console.warn('Analysis not yet implemented for ElectronIPCEngine');

@@ -16,6 +16,7 @@ export interface EngineMove {
 export interface EngineInfo {
   depth: number;
   score: number;
+  isMate: boolean; // true if score is mate-in-X, false if centipawn eval
   pv: string[]; // Principal variation (best line)
   nodes: number;
   time: number;
@@ -40,6 +41,13 @@ export interface IChessEngine {
    * @returns Promise resolving to the best move
    */
   getBestMove(timeMs: number): Promise<EngineMove>;
+
+  /**
+   * Get position evaluation at specified depth
+   * @param depth - Search depth
+   * @returns Promise resolving to engine evaluation info
+   */
+  getEvaluation(depth: number): Promise<EngineInfo>;
 
   /**
    * Start infinite analysis
