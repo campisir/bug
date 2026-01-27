@@ -25,7 +25,8 @@ export type BoardSide = 'player' | 'partner';
 export class Board {
   private fen: string;
   private moveHistory: Move[] = [];
-  private piecePool: PiecePool;
+  private whitePiecePool: PiecePool;  // Pieces available to white
+  private blackPiecePool: PiecePool;  // Pieces available to black
   private side: BoardSide;
   private playerColor: 'w' | 'b';
   private chess: Chess;
@@ -34,7 +35,8 @@ export class Board {
     this.side = side;
     this.playerColor = playerColor;
     this.fen = startFen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-    this.piecePool = new PiecePool();
+    this.whitePiecePool = new PiecePool();
+    this.blackPiecePool = new PiecePool();
     this.chess = new Chess(this.fen);
   }
 
@@ -108,11 +110,8 @@ export class Board {
     
     this.moveHistory.push(move);
     
-    // If a piece was captured, add it to the piece pool
-    if (move.captured && move.captured !== 'k') {
-      const pieceType = move.captured.toLowerCase() as PieceType;
-      this.piecePool.addPiece(pieceType);
-    }
+    // Note: In bughouse, captured pieces are added to the partner board's pool
+    // This is handled by BughouseGame.updatePiecePools(), not here
   }
 
   /**
@@ -132,10 +131,26 @@ export class Board {
   }
 
   /**
-   * Get the piece pool for this board
+   * Get the piece pool for the specified color
+   * @param color - 'w' for white pool, 'b' for black pool. Defaults to player color.
    */
-  getPiecePool(): PiecePool {
-    return this.piecePool;
+  getPiecePool(color?: 'w' | 'b'): PiecePool {
+    const poolColor = color || this.playerColor;
+    return poolColor === 'w' ? this.whitePiecePool : this.blackPiecePool;
+  }
+
+  /**
+   * Get the white piece pool
+   */
+  getWhitePiecePool(): PiecePool {
+    return this.whitePiecePool;
+  }
+
+  /**
+   * Get the black piece pool
+   */
+  getBlackPiecePool(): PiecePool {
+    return this.blackPiecePool;
   }
 
   /**

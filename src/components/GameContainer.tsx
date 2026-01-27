@@ -17,8 +17,10 @@ export function GameContainer() {
   const playerFen = useGameStore((state) => state.playerFen);
   const partnerFen = useGameStore((state) => state.partnerFen);
   const playerTurn = useGameStore((state) => state.playerTurn);
-  const playerPiecePool = useGameStore((state) => state.playerPiecePool);
-  const partnerPiecePool = useGameStore((state) => state.partnerPiecePool);
+  const playerWhitePiecePool = useGameStore((state) => state.playerWhitePiecePool);
+  const playerBlackPiecePool = useGameStore((state) => state.playerBlackPiecePool);
+  const partnerWhitePiecePool = useGameStore((state) => state.partnerWhitePiecePool);
+  const partnerBlackPiecePool = useGameStore((state) => state.partnerBlackPiecePool);
   const gameStatus = useGameStore((state) => state.gameStatus);
   const selectedPiece = useGameStore((state) => state.selectedPiece);
   
@@ -102,11 +104,20 @@ export function GameContainer() {
             </div>
             
             <div className="pool-wrapper">
-              {playerPiecePool && (
+              <h3>Your Pieces (White)</h3>
+              {playerWhitePiecePool && (
                 <PiecePoolDisplay
-                  pieces={playerPiecePool}
-                  color={playerBoard?.getPlayerColor() === 'w' ? 'white' : 'black'}
-                  onDrop={handlePieceDrop}
+                  pieces={playerWhitePiecePool}
+                  color="white"
+                  onPieceClick={(pieceType) => selectPiece(selectedPiece === pieceType ? null : pieceType)}
+                  selectedPiece={selectedPiece}
+                />
+              )}
+              <h3>Opponent's Pieces (Black)</h3>
+              {playerBlackPiecePool && (
+                <PiecePoolDisplay
+                  pieces={playerBlackPiecePool}
+                  color="black"
                 />
               )}
             </div>
@@ -137,10 +148,18 @@ export function GameContainer() {
             </div>
             
             <div className="pool-wrapper">
-              {partnerPiecePool && (
+              <h3>Partner White Bot</h3>
+              {partnerWhitePiecePool && (
                 <PiecePoolDisplay
-                  pieces={partnerPiecePool}
-                  color={partnerBoard?.getPlayerColor() === 'w' ? 'white' : 'black'}
+                  pieces={partnerWhitePiecePool}
+                  color="white"
+                />
+              )}
+              <h3>Partner Black Bot</h3>
+              {partnerBlackPiecePool && (
+                <PiecePoolDisplay
+                  pieces={partnerBlackPiecePool}
+                  color="black"
                 />
               )}
             </div>
@@ -226,6 +245,18 @@ export function GameContainer() {
 
         .control-button:active {
           background: #3d8b40;
+        }
+
+        .pool-wrapper {
+          margin-top: 20px;
+        }
+
+        .pool-wrapper h3 {
+          margin: 10px 0 5px 0;
+          font-size: 14px;
+          font-weight: 600;
+          color: #555;
+          text-align: center;
         }
 
         .board-with-pool {

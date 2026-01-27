@@ -13,8 +13,10 @@ interface GameState {
   partnerFen: string;
   playerTurn: 'w' | 'b';
   partnerTurn: 'w' | 'b';
-  playerPiecePool: Record<PieceType, number> | null;
-  partnerPiecePool: Record<PieceType, number> | null;
+  playerWhitePiecePool: Record<PieceType, number> | null;
+  playerBlackPiecePool: Record<PieceType, number> | null;
+  partnerWhitePiecePool: Record<PieceType, number> | null;
+  partnerBlackPiecePool: Record<PieceType, number> | null;
   gameStatus: GameStatus;
   selectedPiece: PieceType | null;
   
@@ -42,8 +44,10 @@ export const useGameStore = create<GameState>((set, get) => ({
   partnerFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
   playerTurn: 'w',
   partnerTurn: 'w',
-  playerPiecePool: null,
-  partnerPiecePool: null,
+  playerWhitePiecePool: null,
+  playerBlackPiecePool: null,
+  partnerWhitePiecePool: null,
+  partnerBlackPiecePool: null,
   gameStatus: GameStatus.NOT_STARTED as GameStatus,
   selectedPiece: null,
 
@@ -135,22 +139,38 @@ export const useGameStore = create<GameState>((set, get) => ({
     const playerTurn = playerBoard.getCurrentTurn();
     const partnerTurn = partnerBoard.getCurrentTurn();
     
-    // Convert Maps to plain objects for proper React change detection
-    const playerPool = playerBoard.getPiecePool().getAllPieces();
-    const partnerPool = partnerBoard.getPiecePool().getAllPieces();
-    const playerPiecePool: Record<PieceType, number> = {
-      p: playerPool.get('p') || 0,
-      n: playerPool.get('n') || 0,
-      b: playerPool.get('b') || 0,
-      r: playerPool.get('r') || 0,
-      q: playerPool.get('q') || 0,
+    const playerWhitePool = playerBoard.getWhitePiecePool().getAllPieces();
+    const playerBlackPool = playerBoard.getBlackPiecePool().getAllPieces();
+    const partnerWhitePool = partnerBoard.getWhitePiecePool().getAllPieces();
+    const partnerBlackPool = partnerBoard.getBlackPiecePool().getAllPieces();
+    
+    const playerWhitePiecePool: Record<PieceType, number> = {
+      p: playerWhitePool.get('p') || 0,
+      n: playerWhitePool.get('n') || 0,
+      b: playerWhitePool.get('b') || 0,
+      r: playerWhitePool.get('r') || 0,
+      q: playerWhitePool.get('q') || 0,
     };
-    const partnerPiecePool: Record<PieceType, number> = {
-      p: partnerPool.get('p') || 0,
-      n: partnerPool.get('n') || 0,
-      b: partnerPool.get('b') || 0,
-      r: partnerPool.get('r') || 0,
-      q: partnerPool.get('q') || 0,
+    const playerBlackPiecePool: Record<PieceType, number> = {
+      p: playerBlackPool.get('p') || 0,
+      n: playerBlackPool.get('n') || 0,
+      b: playerBlackPool.get('b') || 0,
+      r: playerBlackPool.get('r') || 0,
+      q: playerBlackPool.get('q') || 0,
+    };
+    const partnerWhitePiecePool: Record<PieceType, number> = {
+      p: partnerWhitePool.get('p') || 0,
+      n: partnerWhitePool.get('n') || 0,
+      b: partnerWhitePool.get('b') || 0,
+      r: partnerWhitePool.get('r') || 0,
+      q: partnerWhitePool.get('q') || 0,
+    };
+    const partnerBlackPiecePool: Record<PieceType, number> = {
+      p: partnerBlackPool.get('p') || 0,
+      n: partnerBlackPool.get('n') || 0,
+      b: partnerBlackPool.get('b') || 0,
+      r: partnerBlackPool.get('r') || 0,
+      q: partnerBlackPool.get('q') || 0,
     };
     
     set({
@@ -160,8 +180,10 @@ export const useGameStore = create<GameState>((set, get) => ({
       partnerFen,
       playerTurn,
       partnerTurn,
-      playerPiecePool,
-      partnerPiecePool,
+      playerWhitePiecePool,
+      playerBlackPiecePool,
+      partnerWhitePiecePool,
+      partnerBlackPiecePool,
       gameStatus: game.getStatus(),
     });
   },

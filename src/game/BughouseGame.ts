@@ -116,11 +116,18 @@ export class BughouseGame {
     // TODO: Validate move legality
     // For now, assume move is legal
     
+    // Detect captured piece (if any) before making the move
+    const captured = this.getPieceAt(this.playerBoard, to);
+    if (captured) {
+      console.log(`[CAPTURE] Detected capture at ${to}: ${captured}`);
+    }
+    
     // Add move to history
     this.playerBoard.addMove({
       from,
       to,
       piece: 'p', // TODO: Get actual piece
+      captured,
       promotion,
     });
 
@@ -134,6 +141,14 @@ export class BughouseGame {
 
     // Engine responds on player board
     await this.makeEngineMove(this.playerBoard, this.engines.player);
+
+    // Update piece pools after engine response
+    this.updatePiecePools();
+
+    // Trigger update callback
+    if (this.onUpdate) {
+      this.onUpdate();
+    }
 
     // Start partner board playing if not already running
     if (!this.isPartnerBoardPlaying) {
@@ -300,14 +315,15 @@ export class BughouseGame {
       // Get best move
       const move = await engine.getBestMove(this.thinkingTimeMs);
 
-      // Parse the move to detect captured piece
-      // Note: We need to check the board position to see if there's a piece on the destination
-      const captured = this.getPieceAt(board, move.to);
+      // Detect captured piece (if any) before making the move
+      const captured = move.drop ? undefined : this.getPieceAt(board, move.to);
       if (captured) {
-        console.log(`[CAPTURE] Detected capture at ${move.to}: ${captured}`);
+        const boardName = board === this.playerBoard ? 'player' : 'partner';
+        const moveNum = board.getMoveHistory().length + 1;
+        console.log(`[CAPTURE] ${boardName} board move ${moveNum}: ${move.from || 'drop'} to ${move.to} captures ${captured}`);
       }
 
-      // Apply move
+      // Apply move with captured piece info
       board.addMove({
         from: move.from,
         to: move.to,
@@ -389,8 +405,17 @@ export class BughouseGame {
       const playerLastMove = this.playerBoard.getLastMove();
       if (playerLastMove?.captured && !playerLastMove?.drop) {
         const pieceType = playerLastMove.captured.toLowerCase() as PieceType;
-        console.log(`[POOL] Piece captured on player board: ${pieceType}, adding to partner pool`);
-        this.partnerBoard.getPiecePool().addPiece(pieceType);
+        const wasWhiteMove = currentPlayerMoves % 2 === 1; // Odd count = white just moved
+        
+        if (wasWhiteMove) {
+          // White captured on player board → add to white pool on partner board
+          console.log(`[POOL] WHITE captured on player board: ${pieceType}, adding to partner WHITE pool`);
+          this.partnerBoard.getWhitePiecePool().addPiece(pieceType);
+        } else {
+          // Black captured on player board → add to black pool on partner board
+          console.log(`[POOL] BLACK captured on player board: ${pieceType}, adding to partner BLACK pool`);
+          this.partnerBoard.getBlackPiecePool().addPiece(pieceType);
+        }
       }
       this.lastPlayerMoveCount = currentPlayerMoves;
     }
@@ -400,8 +425,17 @@ export class BughouseGame {
       const partnerLastMove = this.partnerBoard.getLastMove();
       if (partnerLastMove?.captured && !partnerLastMove?.drop) {
         const pieceType = partnerLastMove.captured.toLowerCase() as PieceType;
-        console.log(`[POOL] Piece captured on partner board: ${pieceType}, adding to player pool`);
-        this.playerBoard.getPiecePool().addPiece(pieceType);
+        const wasWhiteMove = currentPartnerMoves % 2 === 1; // Odd count = white just moved
+        
+        if (wasWhiteMove) {
+          // White captured on partner board → add to white pool on player board
+          console.log(`[POOL] WHITE captured on partner board move ${currentPartnerMoves}: ${pieceType}, adding to player WHITE pool`);
+          this.playerBoard.getWhitePiecePool().addPiece(pieceType);
+        } else {
+          // Black captured on partner board → add to black pool on player board
+          console.log(`[POOL] BLACK captured on partner board move ${currentPartnerMoves}: ${pieceType}, adding to player BLACK pool`);
+          this.playerBoard.getBlackPiecePool().addPiece(pieceType);
+        }
       }
       this.lastPartnerMoveCount = currentPartnerMoves;
     }

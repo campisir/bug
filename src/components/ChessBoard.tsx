@@ -36,8 +36,6 @@ export function ChessBoard({
   const chessgroundRef = useRef<Api | null>(null);
   const chessRef = useRef<Chess>(new Chess());
 
-  if (debug) console.log('[PLAYER] ChessBoard render - FEN:', fen, 'movable:', movable, 'orientation:', orientation);
-
   // Calculate legal moves for current position
   const getLegalMoves = (currentFen?: string) => {
     const fenToUse = currentFen || fen;
@@ -55,7 +53,6 @@ export function ChessBoard({
         dests.get(move.from).push(move.to);
       });
       
-      if (debug) console.log('[PLAYER] Legal moves calculated for FEN:', fenToUse, 'moves:', moves.length, 'dests:', dests.size);
       return dests;
     } catch (error) {
       console.error('Error calculating legal moves:', error);
@@ -65,8 +62,6 @@ export function ChessBoard({
 
   useEffect(() => {
     if (!boardRef.current) return;
-
-    if (debug) console.log('[PLAYER] Initializing Chessground...');
 
     // Initialize Chessground
     const config: Config = {
@@ -87,7 +82,6 @@ export function ChessBoard({
       },
       events: {
         select: (square) => {
-          console.log('[PLAYER] Square clicked:', square);
           if (onSquareClick) {
             onSquareClick(square);
           }
@@ -116,7 +110,6 @@ export function ChessBoard({
     chessgroundRef.current = Chessground(boardRef.current, config);
 
     return () => {
-      if (debug) console.log('[PLAYER] Destroying Chessground...');
       chessgroundRef.current?.destroy();
     };
   }, []);
@@ -124,8 +117,6 @@ export function ChessBoard({
   // Update position when FEN changes  
   useEffect(() => {
     if (chessgroundRef.current && fen) {
-      if (debug) console.log('[PLAYER] FEN/movable changed, updating board:', fen, 'movable:', movable);
-      
       try {
         chessRef.current.load(fen);
       } catch (e) {
@@ -134,7 +125,6 @@ export function ChessBoard({
       }
       
       const legalMoves = getLegalMoves(fen);
-      if (debug) console.log('[PLAYER] Setting movable color:', movable ? orientation : undefined, 'dests size:', legalMoves.size);
       
       // Get turn from FEN
       const turn = fen.split(' ')[1] === 'w' ? 'white' : 'black';
@@ -152,8 +142,6 @@ export function ChessBoard({
           showGhost: true,
         },
       });
-      
-      if (debug) console.log('[PLAYER] Chessground config updated');
     }
   }, [fen, movable, orientation]);
 

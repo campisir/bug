@@ -5,6 +5,8 @@ interface PiecePoolDisplayProps {
   pieces: Map<PieceType, number> | Record<PieceType, number>;
   color: 'white' | 'black';
   onDrop?: (pieceType: PieceType) => void;
+  onPieceClick?: (pieceType: PieceType) => void;
+  selectedPiece?: PieceType | null;
 }
 
 /**
@@ -13,7 +15,7 @@ interface PiecePoolDisplayProps {
  * Displays captured pieces available for dropping.
  * In bughouse, pieces captured by your partner become available to you.
  */
-export function PiecePoolDisplay({ pieces, color, onDrop }: PiecePoolDisplayProps) {
+export function PiecePoolDisplay({ pieces, color, onDrop, onPieceClick, selectedPiece }: PiecePoolDisplayProps) {
   const pieceOrder: PieceType[] = ['q', 'r', 'b', 'n', 'p'];
 
   // Memoize piece counts to ensure fresh computation
@@ -63,10 +65,15 @@ export function PiecePoolDisplay({ pieces, color, onDrop }: PiecePoolDisplayProp
           return (
             <div
               key={pieceType}
-              className={`piece-item ${count === 0 ? 'empty' : ''}`}
+              className={`piece-item ${count === 0 ? 'empty' : ''} ${selectedPiece === pieceType ? 'selected' : ''}`}
               draggable={count > 0}
               onDragStart={(e) => handleDragStart(e, pieceType)}
-              onClick={() => count > 0 && onDrop?.(pieceType)}
+              onClick={() => {
+                if (count > 0) {
+                  onPieceClick?.(pieceType);
+                  onDrop?.(pieceType);
+                }
+              }}
             >
               <span className="piece-symbol">{getPieceSymbol(pieceType)}</span>
               <span className="piece-count-badge">{count}</span>
@@ -120,6 +127,12 @@ export function PiecePoolDisplay({ pieces, color, onDrop }: PiecePoolDisplayProp
           border-color: #4CAF50;
           transform: translateY(-2px);
           box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .piece-item.selected {
+          border-color: #4CAF50;
+          background: #e8f5e9;
+          box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.2);
         }
 
         .piece-item.empty {
