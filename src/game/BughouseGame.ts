@@ -52,8 +52,10 @@ export class BughouseGame {
     this.playerBoard = new Board('player', config.playerColor);
     
     // Partner board: two engines playing
-    // If player is white, partner plays white too
-    this.partnerBoard = new Board('partner', config.playerColor);
+    // Partner plays OPPOSITE color from player for proper piece flow
+    // If player is white, partner is black (and vice versa)
+    const partnerColor = config.playerColor === 'w' ? 'b' : 'w';
+    this.partnerBoard = new Board('partner', partnerColor);
     
     this.engines = {
       player: config.playerEngine,
@@ -189,6 +191,7 @@ export class BughouseGame {
       to: square,
       piece: pieceType,
       drop: pieceType,
+      dropColor: 'w', // Player is always white
     });
 
     // Trigger update callback
@@ -301,26 +304,90 @@ export class BughouseGame {
     return undefined;
   }
 
+  /**
+   * Build holdings string for bughouse FEN
+   * Format: UppercaseForWhite, lowercaseForBlack (e.g., "QRPpp")
+   */
+  private buildHoldingsString(piecePool: any, isWhite: boolean): string {
+    const pieces = piecePool.getAllPieces();
+    const order: PieceType[] = ['q', 'r', 'b', 'n', 'p'];
+    let holdings = '';
+    
+    for (const pieceType of order) {
+      const count = pieces.get(pieceType) || 0;
+      if (count > 0) {
+        const piece = isWhite ? pieceType.toUpperCase() : pieceType;
+        holdings += piece.repeat(count);
+      }
+    }
+    
+    return holdings;
+  }
+
+  /**
+   * Determine the color of a dropped piece based on whose turn it is
+   */
+  private getDropColor(board: Board, _pieceType: string): 'w' | 'b' {
+    // The piece color matches whose turn it is to move
+    return board.getCurrentTurn();
+  }
+
   // Private methods
 
   private async makeEngineMove(board: Board, engine: IChessEngine): Promise<void> {
     try {
-      // Set current position
-      const moves = board.getMoveHistory().map(m => 
-        m.drop ? `${m.drop}@${m.to}` : `${m.from}${m.to}${m.promotion || ''}`
-      );
+      // Build FEN with holdings for bughouse
+      const baseFen = board.getFen();
+      const fenParts = baseFen.split(' ');
       
-      await engine.setPosition(board.getFen(), moves);
+      // Get piece pools for holdings
+      const whitePool = board.getWhitePiecePool();
+      const blackPool = board.getBlackPiecePool();
+      
+      // Build holdings string (white pieces first, then black)
+      const whiteHoldings = this.buildHoldingsString(whitePool, true);
+      const blackHoldings = this.buildHoldingsString(blackPool, false);
+      const holdings = whiteHoldings + blackHoldings;
+      
+      // Insert holdings before the halfmove clock (after en passant square)
+      // Standard FEN: position w castling ep halfmove fullmove
+      // Bughouse FEN: position[holdings] w castling ep halfmove fullmove
+      const fenWithHoldings = holdings 
+        ? `${fenParts[0]}[${holdings}] ${fenParts.slice(1).join(' ')}`
+        : baseFen;
+      
+      // Set current position with holdings (no moves - FEN already has the current position)
+      await engine.setPosition(fenWithHoldings, []);
 
       // Get best move
       const move = await engine.getBestMove(this.thinkingTimeMs);
+
+      // If it's a drop move, remove the piece from the pool first
+      if (move.drop) {
+        const pieceType = move.drop.toLowerCase() as PieceType;
+        const dropColor = this.getDropColor(board, move.drop);
+        const pool = dropColor === 'w' ? board.getWhitePiecePool() : board.getBlackPiecePool();
+        
+        const boardName = board === this.playerBoard ? 'player' : 'partner';
+        if (boardName === 'partner') {
+          console.log(`[PARTNER] ${dropColor === 'w' ? 'WHITE' : 'BLACK'} dropping ${pieceType} at ${move.to}`);
+          console.log(`[PARTNER] FEN BEFORE DROP:`, board.getFen());
+        }
+        
+        if (!pool.removePiece(pieceType)) {
+          console.error(`[DROP ERROR] Piece ${pieceType} not available in ${dropColor} pool`);
+          return; // Can't drop a piece that's not available
+        }
+      }
 
       // Detect captured piece (if any) before making the move
       const captured = move.drop ? undefined : this.getPieceAt(board, move.to);
       if (captured) {
         const boardName = board === this.playerBoard ? 'player' : 'partner';
         const moveNum = board.getMoveHistory().length + 1;
-        console.log(`[CAPTURE] ${boardName} board move ${moveNum}: ${move.from || 'drop'} to ${move.to} captures ${captured}`);
+        if (boardName === 'partner') {
+          console.log(`[PARTNER] Move ${moveNum}: ${move.from || 'drop'} to ${move.to} captures ${captured}`);
+        }
       }
 
       // Apply move with captured piece info
@@ -331,7 +398,12 @@ export class BughouseGame {
         captured,
         promotion: move.promotion,
         drop: move.drop ? move.drop as PieceType : undefined,
+        dropColor: move.drop ? this.getDropColor(board, move.drop) : undefined,
       });
+
+      if (board === this.partnerBoard) {
+        console.log(`[PARTNER] FEN AFTER MOVE:`, board.getFen());
+      }
 
       // Note: updatePiecePools() is called after this function returns
 
@@ -367,7 +439,7 @@ export class BughouseGame {
         const moveCount = this.partnerBoard.getMoveHistory().length;
         const engine = moveCount % 2 === 0 ? this.engines.partner1 : this.engines.partner2;
         
-        console.log(`Partner board move ${moveCount + 1}...`);
+        console.log(`[PARTNER] ========== Move ${moveCount + 1} ==========`);
         await this.makeEngineMove(this.partnerBoard, engine);
         
         // Update piece pools after partner move
@@ -405,15 +477,15 @@ export class BughouseGame {
       const playerLastMove = this.playerBoard.getLastMove();
       if (playerLastMove?.captured && !playerLastMove?.drop) {
         const pieceType = playerLastMove.captured.toLowerCase() as PieceType;
-        const wasWhiteMove = currentPlayerMoves % 2 === 1; // Odd count = white just moved
+        const capturedPieceIsWhite = playerLastMove.captured === playerLastMove.captured.toUpperCase();
         
-        if (wasWhiteMove) {
-          // White captured on player board → add to white pool on partner board
-          console.log(`[POOL] WHITE captured on player board: ${pieceType}, adding to partner WHITE pool`);
+        if (capturedPieceIsWhite) {
+          // White piece captured → goes to white player on partner board
+          console.log(`[POOL] White piece captured on player board: ${pieceType}, adding to partner WHITE pool`);
           this.partnerBoard.getWhitePiecePool().addPiece(pieceType);
         } else {
-          // Black captured on player board → add to black pool on partner board
-          console.log(`[POOL] BLACK captured on player board: ${pieceType}, adding to partner BLACK pool`);
+          // Black piece captured → goes to black player on partner board (your partner)
+          console.log(`[POOL] Black piece captured on player board: ${pieceType}, adding to partner BLACK pool`);
           this.partnerBoard.getBlackPiecePool().addPiece(pieceType);
         }
       }
@@ -425,15 +497,15 @@ export class BughouseGame {
       const partnerLastMove = this.partnerBoard.getLastMove();
       if (partnerLastMove?.captured && !partnerLastMove?.drop) {
         const pieceType = partnerLastMove.captured.toLowerCase() as PieceType;
-        const wasWhiteMove = currentPartnerMoves % 2 === 1; // Odd count = white just moved
+        const capturedPieceIsWhite = partnerLastMove.captured === partnerLastMove.captured.toUpperCase();
         
-        if (wasWhiteMove) {
-          // White captured on partner board → add to white pool on player board
-          console.log(`[POOL] WHITE captured on partner board move ${currentPartnerMoves}: ${pieceType}, adding to player WHITE pool`);
+        if (capturedPieceIsWhite) {
+          // White piece captured → goes to white player on player board (you)
+          console.log(`[POOL] White piece captured on partner board: ${pieceType}, adding to player WHITE pool`);
           this.playerBoard.getWhitePiecePool().addPiece(pieceType);
         } else {
-          // Black captured on partner board → add to black pool on player board
-          console.log(`[POOL] BLACK captured on partner board move ${currentPartnerMoves}: ${pieceType}, adding to player BLACK pool`);
+          // Black piece captured → goes to black player on player board (your opponent)
+          console.log(`[POOL] Black piece captured on partner board: ${pieceType}, adding to player BLACK pool`);
           this.playerBoard.getBlackPiecePool().addPiece(pieceType);
         }
       }

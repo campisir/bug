@@ -16,6 +16,7 @@ export interface Move {
   captured?: string;
   promotion?: string;
   drop?: PieceType;
+  dropColor?: 'w' | 'b'; // Color of the dropped piece
   san?: string; // Standard Algebraic Notation
   fen?: string; // FEN after this move
 }
@@ -79,29 +80,26 @@ export class Board {
         ? `${move.drop.toUpperCase()}@${move.to}`  // Drop notation
         : `${move.from}${move.to}${move.promotion || ''}`; // Normal move
       
-      if (this.side === 'player') {
-        console.log(`[${this.side}] Adding move:`, moveNotation);
-      }
-      
       if (move.drop) {
         // For drops, manually update the FEN by placing the piece
-        const piece = this.playerColor === 'w' ? move.drop.toUpperCase() : move.drop.toLowerCase();
+        // Use dropColor to preserve the actual color of the dropped piece
+        const piece = move.dropColor === 'w' ? move.drop.toUpperCase() : move.drop.toLowerCase();
         this.fen = this.placePieceOnFEN(this.fen, move.to, piece);
-        if (this.side === 'player') {
-          console.log(`[${this.side}] Dropped piece, new FEN:`, this.fen);
-        }
-        // Also update chess.js instance
+        // Reset chess.js to the new FEN so subsequent moves work correctly
         this.chess.load(this.fen);
       } else {
-        // Normal chess move
-        const result = this.chess.move({
-          from: move.from,
-          to: move.to,
-          promotion: move.promotion as any,
-        });
-        this.fen = this.chess.fen();
-        if (this.side === 'player') {
-          console.log(`[${this.side}] New FEN:`, this.fen);
+        // For normal moves, try chess.js first, but if it fails (bughouse position), update manually
+        try {
+          const result = this.chess.move({
+            from: move.from,
+            to: move.to,
+            promotion: move.promotion as any,
+          });
+          this.fen = this.chess.fen();
+        } catch (chessJsError) {
+          // chess.js can't handle the position (likely due to bughouse drops)
+          // Update FEN manually
+          this.fen = this.makeManualMove(this.fen, move.from, move.to, move.captured, move.promotion);
         }
       }
     } catch (error) {
@@ -245,5 +243,149 @@ export class Board {
     parts[1] = parts[1] === 'w' ? 'b' : 'w';
     
     return parts.join(' ');
+  }
+
+  /**
+   * Manually make a move by updating FEN (for bughouse positions that chess.js can't handle)
+   */
+  private makeManualMove(fen: string, from: string, to: string, captured?: string, promotion?: string): string {
+    if (this.side === 'partner') {
+      console.log(`[PARTNER MANUAL] Making move ${from} to ${to}, FEN before:`, fen);
+    }
+    
+    const parts = fen.split(' ');
+    const position = parts[0];
+    
+    // Parse from and to squares
+    const fromFile = from.charCodeAt(0) - 'a'.charCodeAt(0);
+    const fromRank = 8 - parseInt(from[1]);
+    const toFile = to.charCodeAt(0) - 'a'.charCodeAt(0);
+    const toRank = 8 - parseInt(to[1]);
+    
+    const ranks = position.split('/');
+    
+    // Get the piece at 'from' square
+    let movingPiece = '';
+    let newFromRank = '';
+    let currentFile = 0;
+    
+    for (const char of ranks[fromRank]) {
+      if (char >= '1' && char <= '8') {
+        const emptyCount = parseInt(char);
+        if (currentFile <= fromFile && fromFile < currentFile + emptyCount) {
+          // From square is empty - should not happen
+          const before = fromFile - currentFile;
+          const after = emptyCount - before - 1;
+          if (before > 0) newFromRank += before.toString();
+          newFromRank += '1';
+          if (after > 0) newFromRank += after.toString();
+          currentFile += emptyCount;
+        } else {
+          newFromRank += char;
+          currentFile += emptyCount;
+        }
+      } else {
+        if (currentFile === fromFile) {
+          movingPiece = char;
+          newFromRank += '1'; // Empty square
+        } else {
+          newFromRank += char;
+        }
+        currentFile++;
+      }
+    }
+    
+    // Apply promotion if specified
+    if (promotion) {
+      const turn = parts[1];
+      movingPiece = turn === 'w' ? promotion.toUpperCase() : promotion.toLowerCase();
+    }
+    
+    // Consolidate empty squares in from rank
+    newFromRank = this.consolidateEmptySquares(newFromRank);
+    ranks[fromRank] = newFromRank;
+    
+    // Place piece at 'to' square (same logic as placePieceOnFEN but for specific rank)
+    let newToRank = '';
+    currentFile = 0;
+    
+    for (const char of ranks[toRank]) {
+      if (char >= '1' && char <= '8') {
+        const emptyCount = parseInt(char);
+        if (currentFile <= toFile && toFile < currentFile + emptyCount) {
+          const before = toFile - currentFile;
+          const after = emptyCount - before - 1;
+          if (before > 0) newToRank += before.toString();
+          newToRank += movingPiece;
+          if (after > 0) newToRank += after.toString();
+          currentFile += emptyCount;
+        } else {
+          newToRank += char;
+          currentFile += emptyCount;
+        }
+      } else {
+        if (currentFile === toFile) {
+          newToRank += movingPiece; // Replace piece
+        } else {
+          newToRank += char;
+        }
+        currentFile++;
+      }
+    }
+    
+    ranks[toRank] = newToRank;
+    
+    // Consolidate empty squares in to rank as well
+    ranks[toRank] = this.consolidateEmptySquares(ranks[toRank]);
+    
+    parts[0] = ranks.join('/');
+    
+    // Toggle turn
+    parts[1] = parts[1] === 'w' ? 'b' : 'w';
+    
+    // Clear en passant
+    parts[3] = '-';
+    
+    // Update halfmove clock
+    const halfmove = parseInt(parts[4]);
+    parts[4] = (captured || promotion) ? '0' : (halfmove + 1).toString();
+    
+    // Update fullmove number
+    if (parts[1] === 'w') {
+      parts[5] = (parseInt(parts[5]) + 1).toString();
+    }
+    
+    const result = parts.join(' ');
+    if (this.side === 'partner') {
+      console.log(`[PARTNER MANUAL] FEN after:`, result);
+    }
+    
+    return result;
+  }
+
+  /**
+   * Consolidate consecutive empty squares in a rank string
+   */
+  private consolidateEmptySquares(rank: string): string {
+    let result = '';
+    let emptyCount = 0;
+    
+    for (const char of rank) {
+      if (char >= '1' && char <= '8') {
+        emptyCount += parseInt(char);
+      } else {
+        if (emptyCount > 0) {
+          result += emptyCount.toString();
+          emptyCount = 0;
+        }
+        result += char;
+      }
+    }
+    
+    if (emptyCount > 0) {
+      result += emptyCount.toString();
+    }
+    
+    return result;
   }
 }

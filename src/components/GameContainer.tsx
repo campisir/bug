@@ -104,7 +104,7 @@ export function GameContainer() {
             </div>
             
             <div className="pool-wrapper">
-              <h3>Your Pieces (White)</h3>
+              <h3>Your Pool</h3>
               {playerWhitePiecePool && (
                 <PiecePoolDisplay
                   pieces={playerWhitePiecePool}
@@ -113,7 +113,7 @@ export function GameContainer() {
                   selectedPiece={selectedPiece}
                 />
               )}
-              <h3>Opponent's Pieces (Black)</h3>
+              <h3>Opponent's Pool</h3>
               {playerBlackPiecePool && (
                 <PiecePoolDisplay
                   pieces={playerBlackPiecePool}
@@ -148,14 +148,14 @@ export function GameContainer() {
             </div>
             
             <div className="pool-wrapper">
-              <h3>Partner White Bot</h3>
+              <h3>Partner's Opponent Pool</h3>
               {partnerWhitePiecePool && (
                 <PiecePoolDisplay
                   pieces={partnerWhitePiecePool}
                   color="white"
                 />
               )}
-              <h3>Partner Black Bot</h3>
+              <h3>Partner's Pool</h3>
               {partnerBlackPiecePool && (
                 <PiecePoolDisplay
                   pieces={partnerBlackPiecePool}
