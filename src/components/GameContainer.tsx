@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ChessBoard } from './ChessBoard';
 import { PiecePoolDisplay } from './PiecePoolDisplay';
+import { ChessClock } from './ChessClock';
 import { useGameStore } from '../store/gameStore';
 import type { PieceType } from '../game/PiecePool';
 
@@ -17,12 +18,17 @@ export function GameContainer() {
   const playerFen = useGameStore((state) => state.playerFen);
   const partnerFen = useGameStore((state) => state.partnerFen);
   const playerTurn = useGameStore((state) => state.playerTurn);
+  const partnerTurn = useGameStore((state) => state.partnerTurn);
   const playerWhitePiecePool = useGameStore((state) => state.playerWhitePiecePool);
   const playerBlackPiecePool = useGameStore((state) => state.playerBlackPiecePool);
   const partnerWhitePiecePool = useGameStore((state) => state.partnerWhitePiecePool);
   const partnerBlackPiecePool = useGameStore((state) => state.partnerBlackPiecePool);
   const gameStatus = useGameStore((state) => state.gameStatus);
   const selectedPiece = useGameStore((state) => state.selectedPiece);
+  const playerWhiteTime = useGameStore((state) => state.playerWhiteTime);
+  const playerBlackTime = useGameStore((state) => state.playerBlackTime);
+  const partnerWhiteTime = useGameStore((state) => state.partnerWhiteTime);
+  const partnerBlackTime = useGameStore((state) => state.partnerBlackTime);
   
   // Get actions (these don't cause re-renders)
   const initialize = useGameStore((state) => state.initialize);
@@ -31,6 +37,7 @@ export function GameContainer() {
   const selectPiece = useGameStore((state) => state.selectPiece);
   const pausePartnerBoard = useGameStore((state) => state.pausePartnerBoard);
   const resumePartnerBoard = useGameStore((state) => state.resumePartnerBoard);
+  const tickClock = useGameStore((state) => state.tickClock);
 
   useEffect(() => {
     console.log('[GameContainer] Component mounted');
@@ -41,6 +48,15 @@ export function GameContainer() {
     // Initialize the game when component mounts
     initialize();
   }, [initialize]);
+
+  useEffect(() => {
+    // Set up clock ticker (100ms intervals)
+    const interval = setInterval(() => {
+      tickClock();
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [tickClock]);
 
   const handlePlayerMove = (from: string, to: string, promotion?: string) => {
     makeMove(from, to, promotion);
@@ -79,7 +95,7 @@ export function GameContainer() {
 
       <div className="boards-container">
         {/* Player Board Section */}
-        <div className="board-section">
+        <div className="board-section player-board">
           <div className="board-header">
             <h2>Your Board</h2>
             <span className="board-info">
@@ -89,46 +105,51 @@ export function GameContainer() {
           </div>
           
           <div className="board-with-pool">
-            <div className="board-wrapper">
-              {playerBoard && (
-                <ChessBoard
-                  key="player-board"
-                  fen={playerFen}
-                  orientation={playerBoard.getPlayerColor() === 'w' ? 'white' : 'black'}
-                  onMove={handlePlayerMove}
-                  onSquareClick={handleSquareClick}
-                  movable={playerTurn === playerBoard.getPlayerColor() && !selectedPiece}
-                  debug={true}
-                />
-              )}
-            </div>
-            
-            <div className="pool-wrapper">
-              <h3>Your Pool</h3>
-              {playerWhitePiecePool && (
+            <div className="pool-wrapper player-pool">
+              {playerWhitePiecePool && playerBlackPiecePool && (
                 <PiecePoolDisplay
-                  pieces={playerWhitePiecePool}
-                  color="white"
+                  whitePieces={playerWhitePiecePool}
+                  blackPieces={playerBlackPiecePool}
                   onPieceClick={(pieceType) => selectPiece(selectedPiece === pieceType ? null : pieceType)}
                   selectedPiece={selectedPiece}
                 />
               )}
-              <h3>Opponent's Pool</h3>
-              {playerBlackPiecePool && (
-                <PiecePoolDisplay
-                  pieces={playerBlackPiecePool}
-                  color="black"
-                />
-              )}
+            </div>
+            
+            <div className="board-and-clock">
+              <div className="board-wrapper player-board-wrapper">
+                {playerBoard && (
+                  <ChessBoard
+                    key="player-board"
+                    fen={playerFen}
+                    orientation={playerBoard.getPlayerColor() === 'w' ? 'white' : 'black'}
+                    onMove={handlePlayerMove}
+                    onSquareClick={handleSquareClick}
+                    movable={playerTurn === playerBoard.getPlayerColor() && !selectedPiece}
+                    debug={true}
+                  />
+                )}
+              </div>
+              
+              <div className="clock-container">
+                {playerBoard && (
+                  <ChessClock
+                    whiteTime={playerWhiteTime}
+                    blackTime={playerBlackTime}
+                    currentTurn={playerTurn}
+                    playerColor={playerBoard.getPlayerColor()}
+                  />
+                )}
+              </div>
             </div>
           </div>
         </div>
 
         {/* Partner Board Section */}
-        <div className="board-section">
+        <div className="board-section partner-board">
           <div className="board-header">
             <h2>Partner Board</h2>
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', justifyContent: 'center' }}>
               <button onClick={pausePartnerBoard} className="control-button">Pause</button>
               <button onClick={resumePartnerBoard} className="control-button">Resume</button>
               <span className="board-info">Bots Playing</span>
@@ -136,30 +157,35 @@ export function GameContainer() {
           </div>
           
           <div className="board-with-pool">
-            <div className="board-wrapper">
-              {partnerBoard && (
-                <ChessBoard
-                  key="partner-board"
-                  fen={partnerFen}
-                  orientation={partnerBoard.getPlayerColor() === 'w' ? 'white' : 'black'}
-                  movable={false}
-                />
-              )}
+            <div className="board-and-clock">
+              <div className="board-wrapper partner-board-wrapper">
+                {partnerBoard && (
+                  <ChessBoard
+                    key="partner-board"
+                    fen={partnerFen}
+                    orientation={partnerBoard.getPlayerColor() === 'w' ? 'white' : 'black'}
+                    movable={false}
+                  />
+                )}
+              </div>
+              
+              <div className="clock-container">
+                {partnerBoard && (
+                  <ChessClock
+                    whiteTime={partnerWhiteTime}
+                    blackTime={partnerBlackTime}
+                    currentTurn={partnerTurn}
+                    playerColor={partnerBoard.getPlayerColor()}
+                  />
+                )}
+              </div>
             </div>
             
-            <div className="pool-wrapper">
-              <h3>Partner's Opponent Pool</h3>
-              {partnerWhitePiecePool && (
+            <div className="pool-wrapper partner-pool">
+              {partnerWhitePiecePool && partnerBlackPiecePool && (
                 <PiecePoolDisplay
-                  pieces={partnerWhitePiecePool}
-                  color="white"
-                />
-              )}
-              <h3>Partner's Pool</h3>
-              {partnerBlackPiecePool && (
-                <PiecePoolDisplay
-                  pieces={partnerBlackPiecePool}
-                  color="black"
+                  whitePieces={partnerWhitePiecePool}
+                  blackPieces={partnerBlackPiecePool}
                 />
               )}
             </div>
@@ -170,7 +196,7 @@ export function GameContainer() {
       <style>{`
         .game-container {
           padding: 20px;
-          max-width: 1400px;
+          max-width: 100%;
           margin: 0 auto;
         }
 
@@ -202,15 +228,21 @@ export function GameContainer() {
 
         .boards-container {
           display: flex;
-          gap: 40px;
+          gap: 30px;
           justify-content: center;
-          flex-wrap: wrap;
+          align-items: flex-start;
         }
 
         .board-section {
-          flex: 1;
-          min-width: 400px;
-          max-width: 600px;
+          flex-shrink: 0;
+        }
+
+        .board-section.player-board {
+          order: 1;
+        }
+
+        .board-section.partner-board {
+          order: 2;
         }
 
         .board-header {
@@ -248,7 +280,9 @@ export function GameContainer() {
         }
 
         .pool-wrapper {
-          margin-top: 20px;
+          display: flex;
+          flex-direction: column;
+          gap: 15px;
         }
 
         .pool-wrapper h3 {
@@ -262,20 +296,58 @@ export function GameContainer() {
         .board-with-pool {
           display: flex;
           gap: 20px;
-          align-items: flex-start;
+          align-items: center;
+        }
+
+        .board-and-clock {
+          display: flex;
+          flex-direction: column;
+          gap: 15px;
         }
 
         .board-wrapper {
-          flex: 1;
-          aspect-ratio: 1;
+          flex-shrink: 0;
           box-shadow: 0 4px 6px rgba(0,0,0,0.1);
           border-radius: 4px;
           overflow: hidden;
         }
 
-        .pool-wrapper {
-          width: 220px;
+        .player-board-wrapper {
+          width: 600px;
+          height: 600px;
         }
+
+        .partner-board-wrapper {
+          width: 600px;
+          height: 600px;
+        }
+
+        .board-wrapper > div {
+          width: 100% !important;
+          height: 100% !important;
+        }
+
+        .clock-container {
+          width: 600px;
+        }
+
+        .pool-wrapper {
+          flex-shrink: 0;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .player-pool {
+          width: 200px;
+          height: 600px;
+        }
+
+        .partner-pool {
+          width: 200px;
+          height: 600px;
+        }
+
+
 
         @media (max-width: 1200px) {
           .boards-container {

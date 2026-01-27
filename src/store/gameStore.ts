@@ -20,6 +20,12 @@ interface GameState {
   gameStatus: GameStatus;
   selectedPiece: PieceType | null;
   
+  // Clock state (in milliseconds)
+  playerWhiteTime: number;
+  playerBlackTime: number;
+  partnerWhiteTime: number;
+  partnerBlackTime: number;
+  
   // Actions
   initialize: () => Promise<void>;
   makeMove: (from: string, to: string, promotion?: string) => Promise<void>;
@@ -29,6 +35,7 @@ interface GameState {
   resumePartnerBoard: () => void;
   updateBoards: () => void;
   reset: () => void;
+  tickClock: () => void;
 }
 
 /**
@@ -50,6 +57,12 @@ export const useGameStore = create<GameState>((set, get) => ({
   partnerBlackPiecePool: null,
   gameStatus: GameStatus.NOT_STARTED as GameStatus,
   selectedPiece: null,
+  
+  // Initialize clocks to 5 minutes (300000 ms)
+  playerWhiteTime: 300000,
+  playerBlackTime: 300000,
+  partnerWhiteTime: 300000,
+  partnerBlackTime: 300000,
 
   initialize: async () => {
     try {
@@ -200,12 +213,52 @@ export const useGameStore = create<GameState>((set, get) => ({
       partnerBoard: null,
       playerFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
       partnerFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
-      playerTurn: 'w',
-      partnerTurn: 'w',
-      playerPiecePool: null,
-      partnerPiecePool: null,
-      gameStatus: GameStatus.NOT_STARTED as GameStatus,
-      selectedPiece: null,
+      playerWhiteTime: 300000,
+      playerBlackTime: 300000,
+      partnerWhiteTime: 300000,
+      partnerBlackTime: 300000,
     });
+  },
+
+  tickClock: () => {
+    const { gameStatus, playerTurn, partnerTurn, playerWhiteTime, playerBlackTime, partnerWhiteTime, partnerBlackTime } = get();
+    
+    if (gameStatus !== GameStatus.IN_PROGRESS) return;
+
+    const updates: Partial<GameState> = {};
+    
+    // Tick player board clock
+    if (playerTurn === 'w' && playerWhiteTime > 0) {
+      const newTime = Math.max(0, playerWhiteTime - 100);
+      updates.playerWhiteTime = newTime;
+      if (newTime === 0) {
+        updates.gameStatus = GameStatus.FINISHED;
+      }
+    } else if (playerTurn === 'b' && playerBlackTime > 0) {
+      const newTime = Math.max(0, playerBlackTime - 100);
+      updates.playerBlackTime = newTime;
+      if (newTime === 0) {
+        updates.gameStatus = GameStatus.FINISHED;
+      }
+    }
+    
+    // Tick partner board clock
+    if (partnerTurn === 'w' && partnerWhiteTime > 0) {
+      const newTime = Math.max(0, partnerWhiteTime - 100);
+      updates.partnerWhiteTime = newTime;
+      if (newTime === 0) {
+        updates.gameStatus = GameStatus.FINISHED;
+      }
+    } else if (partnerTurn === 'b' && partnerBlackTime > 0) {
+      const newTime = Math.max(0, partnerBlackTime - 100);
+      updates.partnerBlackTime = newTime;
+      if (newTime === 0) {
+        updates.gameStatus = GameStatus.FINISHED;
+      }
+    }
+    
+    if (Object.keys(updates).length > 0) {
+      set(updates);
+    }
   },
 }));
