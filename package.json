@@ -1,0 +1,42 @@
+{
+  "name": "bug",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "build:electron": "tsc -p tsconfig.electron.json && tsc -p tsconfig.preload.json",
+    "electron": "npm run build:electron && electron .",
+    "electron:dev": "cross-env NODE_ENV=development electron .",
+    "dev:electron": "concurrently \"npm run dev\" \"npm run build:electron -- --watch\" \"wait-on http://localhost:5173 && npm run electron:dev\"",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "chess.js": "^1.4.0",
+    "chessground": "^9.1.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.5",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "concurrently": "^9.1.2",
+    "cross-env": "^10.1.0",
+    "electron": "^34.0.0",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.46.4",
+    "vite": "^7.2.4",
+    "wait-on": "^9.0.3"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ES2022",
+    "lib": ["ES2020"],
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "outDir": "./dist-electron",
+    "types": ["node"]
+  },
+  "include": [
+    "electron/main.ts",
+    "electron/engineManager.ts",
+    "electron/FairyStockfishEngine.ts"
+  ]
+}
