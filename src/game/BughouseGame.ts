@@ -34,6 +34,7 @@ export interface BughouseGameConfig {
   partnerEngine2: IChessEngine; // Second bot on partner board
   thinkingTimeMs?: number; // Time for engine to think (default: 1000ms)
   onChatMessage?: (sender: 'Partner' | 'Bot 1' | 'Bot 2' | 'System', message: string) => void;
+  getClockTimes?: () => { playerWhite: number; playerBlack: number; partnerWhite: number; partnerBlack: number };
 }
 
 export class BughouseGame {
@@ -48,16 +49,25 @@ export class BughouseGame {
   private thinkingTimeMs: number;
   private onUpdate?: () => void;
   private onChatMessage?: (sender: 'Partner' | 'Bot 1' | 'Bot 2' | 'System', message: string) => void;
+  private getClockTimes?: () => { playerWhite: number; playerBlack: number; partnerWhite: number; partnerBlack: number };
   private isPartnerBoardPlaying: boolean = false;
   private isPaused: boolean = false;
   private lastPlayerMoveCount: number = 0;
   private lastPartnerMoveCount: number = 0;
   
-  // Piece request system for strategic stalling
-  private pieceRequests: {
-    playerRequests?: PieceType; // What player board bot wants from partner
-    partnerRequests?: PieceType; // What partner board bot wants from player
+  // Stalling state tracking
+  private stallingState: {
+    bot1?: { piece: PieceType; reason: string }; // Bot 1 (player's opponent)
+    partner?: { piece: PieceType; reason: string }; // Partner bot
+    bot2?: { piece: PieceType; reason: string }; // Bot 2 (partner's opponent)
   } = {};
+  
+  // Track if bot has already sent "down time" message
+  private downTimeMessageSent: {
+    bot1: boolean;
+    partner: boolean;
+    bot2: boolean;
+  } = { bot1: false, partner: false, bot2: false };
 
   constructor(config: BughouseGameConfig) {
     // Player board: player vs engine
@@ -69,6 +79,7 @@ export class BughouseGame {
     const partnerColor = config.playerColor === 'w' ? 'b' : 'w';
     this.partnerBoard = new Board('partner', partnerColor);
     
+    this.getClockTimes = config.getClockTimes;
     this.engines = {
       player: config.playerEngine,
       partner1: config.partnerEngine1,
@@ -248,6 +259,9 @@ export class BughouseGame {
     // Engine responds
     await this.makeEngineMove(this.playerBoard, this.engines.player);
 
+    // Check if any bot should abandon stalling due to time
+    this.checkTimeBasedStallAbandonment();
+    
     // Update pools after engine response
     this.updatePiecePools();
 
@@ -452,28 +466,29 @@ export class BughouseGame {
 
   /**
    * Check if adding a specific piece type would critically improve the position
-   * Returns the CHEAPEST piece type to request, or null if no stalling needed
-   * 
-   * Criteria:
-   * - Pawn/Knight/Bishop: Request if forces mate OR saves from significantly losing position
-   * - Rook/Queen: ONLY request if forces mate OR saves from mate threat
+   * Returns evaluation result with piece, scenario, and whether to stall
    */
   private async shouldStallForPiece(
     board: Board, 
-    engine: IChessEngine
-  ): Promise<PieceType | null> {
-    const EVAL_DEPTH = 12; // Depth for evaluation
+    engine: IChessEngine,
+    botName: 'Bot 1' | 'Partner' | 'Bot 2'
+  ): Promise<{ piece: PieceType; scenario: string; shouldStall: boolean; mateDistance?: number } | null> {
+    const EVAL_DEPTH = 12;
+    const LOSING_THRESHOLD = 300; // Position is "lost" if eval > +300cp (positive = bad)
+    const WINNING_THRESHOLD = 200; // Position is "significantly winning" if eval < -200cp (negative = good)
     
-    // Identify which board and color for logging
-    const boardName = board === this.playerBoard ? 'PLAYER' : 'PARTNER';
-    const turn = board.getCurrentTurn();
-    const colorName = turn === 'w' ? 'WHITE' : 'BLACK';
-    const botId = `[${boardName} ${colorName}]`;
+    // Get diagonal player's time
+    const times = this.getClockTimes?.();
+    if (!times) return null;
+    
+    const { botTime, diagonalTime } = this.getBotAndDiagonalTimes(botName, times);
+    const upOnTime = botTime > diagonalTime;
     
     // Build FEN with current holdings
     const baseFen = board.getFen();
     const whitePool = board.getWhitePiecePool();
     const blackPool = board.getBlackPiecePool();
+    const turn = board.getCurrentTurn();
     const currentHoldings = this.buildHoldingsString(whitePool, true) + 
                            this.buildHoldingsString(blackPool, false);
     
@@ -481,24 +496,50 @@ export class BughouseGame {
       ? `${baseFen.split(' ')[0]}[${currentHoldings}] ${baseFen.split(' ').slice(1).join(' ')}`
       : baseFen;
     
-    // Get current position evaluation
     await engine.setPosition(fenWithCurrentHoldings, []);
     const currentEval = await engine.getEvaluation(EVAL_DEPTH);
     
-    const currentStatus = currentEval.isMate 
-      ? `mate in ${currentEval.score}`
-      : `eval ${currentEval.score}cp`;
-    console.log(`[STALL] ${botId} Current: ${currentStatus}`);
+    console.log(`[STALL] ${botName} evaluation: ${currentEval.isMate ? `mate ${currentEval.score}` : `${currentEval.score}cp`}`);
     
-    // If already delivering mate, don't stall
-    if (currentEval.isMate && currentEval.score > 0) {
+    // If already delivering mate (NEGATIVE score in bughouse), don't stall
+    if (currentEval.isMate && currentEval.score < 0) {
+      console.log(`[STALL] ${botName} is mating in ${Math.abs(currentEval.score)}, no stalling needed`);
       return null;
+    }
+    
+    // Check for mate-in-1 with no escape (score is +1, meaning getting mated in 1)
+    if (currentEval.isMate && currentEval.score === 1) {
+      console.log(`[STALL] ${botName} is getting mated in 1, checking if any piece saves...`);
+      // Test if any piece saves us
+      const piecesToTry: PieceType[] = ['p', 'n', 'b', 'r', 'q'];
+      let canBeSaved = false;
+      
+      for (const pieceType of piecesToTry) {
+        const hypotheticalPiece = turn === 'w' ? pieceType.toUpperCase() : pieceType;
+        const hypotheticalHoldings = currentHoldings + hypotheticalPiece;
+        const fenWithHypothetical = `${baseFen.split(' ')[0]}[${hypotheticalHoldings}] ${baseFen.split(' ').slice(1).join(' ')}`;
+        
+        await engine.setPosition(fenWithHypothetical, []);
+        const hypotheticalEval = await engine.getEvaluation(EVAL_DEPTH);
+        
+        // Check if adding this piece either removes mate or flips it to us mating (negative)
+        if (!hypotheticalEval.isMate || hypotheticalEval.score < 0) {
+          canBeSaved = true;
+          console.log(`[STALL] ${botName} CAN be saved by ${pieceType}`);
+          break;
+        }
+      }
+      
+      if (!canBeSaved) {
+        console.log(`[STALL] ${botName} CANNOT be saved - true mate in 1`);
+        // Mated in 1, no escape - stall 100% if up on time
+        return { piece: 'q', scenario: 'mated', shouldStall: upOnTime };
+      }
     }
     
     const piecesToTry: PieceType[] = ['p', 'n', 'b', 'r', 'q'];
     
     for (const pieceType of piecesToTry) {
-      // Add hypothetical piece to holdings
       const hypotheticalPiece = turn === 'w' ? pieceType.toUpperCase() : pieceType;
       const hypotheticalHoldings = currentHoldings + hypotheticalPiece;
       const fenWithHypothetical = `${baseFen.split(' ')[0]}[${hypotheticalHoldings}] ${baseFen.split(' ').slice(1).join(' ')}`;
@@ -506,30 +547,77 @@ export class BughouseGame {
       await engine.setPosition(fenWithHypothetical, []);
       const hypotheticalEval = await engine.getEvaluation(EVAL_DEPTH);
       
-      const hypotheticalStatus = hypotheticalEval.isMate
-        ? `mate in ${hypotheticalEval.score}`
-        : `eval ${hypotheticalEval.score}cp`;
-      console.log(`[STALL] ${botId} With ${pieceType}: ${hypotheticalStatus}`);
-      
-      // Check if this piece forces mate (not mating → mating)
-      const forcesMate = !currentEval.isMate && hypotheticalEval.isMate && hypotheticalEval.score > 0;
-      
-      // Check if this piece saves from mate threat (getting mated → not getting mated)
-      const savesFromMate = currentEval.isMate && currentEval.score < 0 && 
-                           (!hypotheticalEval.isMate || hypotheticalEval.score > 0);
-      
-      // ONLY stall on actual mate threats - ignore material evaluation completely
+      // Scenario 1: Forces mate (current NOT mating, with piece IS mating with NEGATIVE score)
+      const forcesMate = !currentEval.isMate && hypotheticalEval.isMate && hypotheticalEval.score < 0;
       if (forcesMate) {
-        console.log(`[STALL] ${botId} ${pieceType.toUpperCase()} forces mate in ${hypotheticalEval.score}! Requesting.`);
-        return pieceType;
+        console.log(`[STALL] ${botName} with ${pieceType} FORCES mate in ${Math.abs(hypotheticalEval.score)}`);
+        const stallChance = this.getStallProbability(pieceType, 'forces_mate');
+        const shouldStall = upOnTime && Math.random() < stallChance;
+        return { piece: pieceType, scenario: 'forces_mate', shouldStall, mateDistance: Math.abs(hypotheticalEval.score) };
       }
+      
+      // Scenario 2: Saves from mate (current getting mated with POSITIVE score, with piece either not mate or mating with NEGATIVE score)
+      const savesFromMate = currentEval.isMate && currentEval.score > 0 && 
+                           (!hypotheticalEval.isMate || hypotheticalEval.score < 0);
       if (savesFromMate) {
-        console.log(`[STALL] ${botId} ${pieceType.toUpperCase()} saves from mate! Requesting.`);
-        return pieceType;
+        console.log(`[STALL] ${botName} with ${pieceType} SAVES from mate ${currentEval.score} -> ${hypotheticalEval.isMate ? `mate ${hypotheticalEval.score}` : `${hypotheticalEval.score}cp`}`);
+        const isMateInOne = currentEval.score === 1;
+        const stallChance = isMateInOne ? 1.0 : this.getStallProbability(pieceType, 'saves_from_mate');
+        const shouldStall = upOnTime && Math.random() < stallChance;
+        return { piece: pieceType, scenario: isMateInOne ? 'saves_mate_in_1' : 'saves_from_mate', shouldStall, mateDistance: currentEval.score };
+      }
+      
+      // Scenario 3: Turns lost to winning (only for p, n, b)
+      if (['p', 'n', 'b'].includes(pieceType)) {
+        const turnsLostToWinning = !currentEval.isMate && currentEval.score > LOSING_THRESHOLD &&
+                                   !hypotheticalEval.isMate && hypotheticalEval.score < -WINNING_THRESHOLD;
+        if (turnsLostToWinning) {
+          console.log(`[STALL] ${botName} with ${pieceType} turns LOST (${currentEval.score}cp) to WINNING (${hypotheticalEval.score}cp)`);
+          const stallChance = this.getStallProbability(pieceType, 'lost_to_winning');
+          const shouldStall = upOnTime && Math.random() < stallChance;
+          return { piece: pieceType, scenario: 'lost_to_winning', shouldStall };
+        }
       }
     }
     
-    return null; // No critical need found
+    return null;
+  }
+  
+  /**
+   * Get stall probability based on piece type and scenario
+   */
+  private getStallProbability(piece: PieceType, scenario: string): number {
+    const probabilities: Record<PieceType, Record<string, number>> = {
+      'p': { forces_mate: 0.95, saves_from_mate: 0.90, lost_to_winning: 0.60 },
+      'n': { forces_mate: 0.75, saves_from_mate: 0.70, lost_to_winning: 0.50 },
+      'b': { forces_mate: 0.75, saves_from_mate: 0.70, lost_to_winning: 0.50 },
+      'r': { forces_mate: 0.50, saves_from_mate: 0.33, lost_to_winning: 0.0 },
+      'q': { forces_mate: 0.50, saves_from_mate: 0.25, lost_to_winning: 0.0 },
+    };
+    
+    return probabilities[piece]?.[scenario] || 0;
+  }
+  
+  /**
+   * Get bot's time and diagonal player's time
+   */
+  private getBotAndDiagonalTimes(
+    botName: 'Bot 1' | 'Partner' | 'Bot 2',
+    times: { playerWhite: number; playerBlack: number; partnerWhite: number; partnerBlack: number }
+  ): { botTime: number; diagonalTime: number } {
+    // Player is white on player board, Partner is black on partner board
+    // Bot 1 is black on player board, Bot 2 is white on partner board
+    
+    if (botName === 'Bot 1') {
+      // Bot 1 plays black on player board, diagonal is Partner (black on partner board)
+      return { botTime: times.playerBlack, diagonalTime: times.partnerBlack };
+    } else if (botName === 'Partner') {
+      // Partner plays black on partner board, diagonal is Bot 1 (black on player board)
+      return { botTime: times.partnerBlack, diagonalTime: times.playerBlack };
+    } else {
+      // Bot 2 plays white on partner board, diagonal is Player (white on player board)
+      return { botTime: times.partnerWhite, diagonalTime: times.playerWhite };
+    }
   }
 
   /**
@@ -542,6 +630,71 @@ export class BughouseGame {
     const baseFen = board.getFen();
     await engine.setPosition(baseFen, []);
     return await engine.getBestMove(this.thinkingTimeMs);
+  }
+  
+  /**
+   * Identify which bot is making a move
+   */
+  private identifyBot(board: Board, engine: IChessEngine): 'Bot 1' | 'Partner' | 'Bot 2' {
+    if (board === this.playerBoard) {
+      // Player board - engine is Bot 1 (player's opponent)
+      return 'Bot 1';
+    } else {
+      // Partner board - determine which bot based on engine reference
+      if (engine === this.engines.partner1) {
+        // partner1 plays black (Partner)
+        return 'Partner';
+      } else {
+        // partner2 plays white (Bot 2)
+        return 'Bot 2';
+      }
+    }
+  }
+  
+  /**
+   * Convert bot name to stalling state key
+   */
+  private botNameToKey(botName: 'Bot 1' | 'Partner' | 'Bot 2'): 'bot1' | 'partner' | 'bot2' {
+    if (botName === 'Bot 1') return 'bot1';
+    if (botName === 'Partner') return 'partner';
+    return 'bot2';
+  }
+  
+  /**
+   * Convert stalling state key to bot name
+   */
+  private botKeyToName(botKey: 'bot1' | 'partner' | 'bot2'): 'Bot 1' | 'Partner' | 'Bot 2' {
+    if (botKey === 'bot1') return 'Bot 1';
+    if (botKey === 'partner') return 'Partner';
+    return 'Bot 2';
+  }
+  
+  /**
+   * Check if bots should stop stalling due to time disadvantage
+   */
+  private checkTimeBasedStallAbandonment(): void {
+    const times = this.getClockTimes?.();
+    if (!times) return;
+    
+    const botKeys: Array<'bot1' | 'partner' | 'bot2'> = ['bot1', 'partner', 'bot2'];
+    
+    for (const botKey of botKeys) {
+      if (this.stallingState[botKey]) {
+        const botName = this.botKeyToName(botKey);
+        const { botTime, diagonalTime } = this.getBotAndDiagonalTimes(botName, times);
+        
+        // If bot is now down on time, stop stalling
+        if (botTime <= diagonalTime) {
+          console.log(`[STALL] ${botName} now down on time - abandoning stall`);
+          
+          if (this.onChatMessage) {
+            this.onChatMessage(botName, 'I go.');
+          }
+          
+          delete this.stallingState[botKey];
+        }
+      }
+    }
   }
 
   /**
@@ -633,49 +786,100 @@ export class BughouseGame {
       // Set current position with holdings (no moves - FEN already has the current position)
       await engine.setPosition(fenWithHoldings, []);
 
+      // Identify which bot is making the move
+      const botName = this.identifyBot(board, engine);
+      
+      console.log(`[MOVE] ${botName} thinking...`);
+      
       // Check if we should stall for a piece
-      const requestedPiece = await this.shouldStallForPiece(board, engine);
+      const stallResult = await this.shouldStallForPiece(board, engine, botName);
       
       // IMPORTANT: Reset engine to ACTUAL position after testing hypothetical pieces
-      // shouldStallForPiece() leaves the engine with a hypothetical position loaded
       await engine.setPosition(fenWithHoldings, []);
       
-      if (requestedPiece) {
-        // Store the request so partner board can prioritize capturing this piece type
-        const isPlayerBoard = board === this.playerBoard;
-        if (isPlayerBoard) {
-          this.pieceRequests.playerRequests = requestedPiece;
-          console.log(`[REQUEST] Player board requests ${requestedPiece} from partner`);
+      if (stallResult) {
+        const { piece, scenario, shouldStall, mateDistance } = stallResult;
+        
+        console.log(`[STALL RESULT] ${botName}: piece=${piece}, scenario=${scenario}, shouldStall=${shouldStall}`);
+        
+        // Handle mated scenario
+        if (scenario === 'mated') {
+          console.log(`[STALL] ${botName} scenario is 'mated' - getting mated in 1 with no escape`);
           if (this.onChatMessage) {
-            this.onChatMessage('Bot 1', `Can you capture a ${requestedPiece}?`);
-            // Partner's response
-            setTimeout(() => {
-              if (this.onChatMessage) {
-                this.onChatMessage('Partner', `I will try to hold it :)`);
-              }
-            }, 500);
+            this.onChatMessage(botName, 'I am mated');
           }
-        } else {
-          this.pieceRequests.partnerRequests = requestedPiece;
-          console.log(`[REQUEST] Partner board requests ${requestedPiece} from player`);
-          if (this.onChatMessage) {
-            this.onChatMessage('Partner', `Could you get me a ${requestedPiece}?`);
-            // Bot 2's response
-            setTimeout(() => {
-              if (this.onChatMessage) {
-                this.onChatMessage('Bot 2', `No ${requestedPiece}`);
-              }
-            }, 500);
+          if (shouldStall) {
+            this.stallingState[this.botNameToKey(botName)] = { piece, reason: scenario };
+            const move = await this.getStallMove(board, engine);
+            await this.executeMoveOnBoard(board, engine, move);
+            return;
+          } else {
+            // Not stalling (down on time) - just play the move
+            const move = await engine.getBestMove(this.thinkingTimeMs);
+            await this.executeMoveOnBoard(board, engine, move);
+            return;
           }
         }
         
-        // Get a stalling move instead of the best move
-        const move = await this.getStallMove(board, engine);
-        console.log(`[STALL] Playing stalling move while waiting for ${requestedPiece}`);
+        // Generate scenario-specific message
+        let requestMessage = '';
+        if (scenario === 'forces_mate') {
+          requestMessage = `${piece.toUpperCase()} mates in ${mateDistance}.`;
+        } else if (scenario === 'saves_mate_in_1' || scenario === 'saves_from_mate') {
+          requestMessage = `${piece.toUpperCase()} helps me survive`;
+        } else if (scenario === 'lost_to_winning') {
+          requestMessage = `${piece.toUpperCase()} saves my position`;
+        }
         
-        // Continue with the stalling move...
-        await this.executeMoveOnBoard(board, engine, move);
-        return;
+        // Determine if we should stall based on time and probability
+        if (shouldStall) {
+          // We're stalling - send scenario-specific message
+          this.stallingState[this.botNameToKey(botName)] = { piece, reason: scenario };
+          
+          // Reset down time message flag since we're back to stalling (up on time)
+          this.downTimeMessageSent[this.botNameToKey(botName)] = false;
+          
+          if (this.onChatMessage) {
+            this.onChatMessage(botName, requestMessage);
+          }
+          
+          const move = await this.getStallMove(board, engine);
+          await this.executeMoveOnBoard(board, engine, move);
+          return;
+        } else {
+          // Not stalling - send appropriate message
+          const times = this.getClockTimes?.();
+          const upOnTime = times ? this.getBotAndDiagonalTimes(botName, times).botTime > this.getBotAndDiagonalTimes(botName, times).diagonalTime : false;
+          
+          if (this.onChatMessage) {
+            if (upOnTime) {
+              // Up on time but probability roll failed
+              // Reset down time flag since we're up on time
+              this.downTimeMessageSent[this.botNameToKey(botName)] = false;
+              
+              this.onChatMessage(botName, requestMessage);
+              setTimeout(() => {
+                if (this.onChatMessage) {
+                  this.onChatMessage(botName, `Actually, I'll go for now. Not worth sitting.`);
+                }
+              }, 1500);
+            } else {
+              // Not up on time - only send message if we haven't already
+              const botKey = this.botNameToKey(botName);
+              if (!this.downTimeMessageSent[botKey]) {
+                this.onChatMessage(botName, requestMessage);
+                setTimeout(() => {
+                  if (this.onChatMessage) {
+                    this.onChatMessage(botName, `nvm we are down time. I go.`);
+                  }
+                }, 1500);
+                // Mark that we've sent the down time message
+                this.downTimeMessageSent[botKey] = true;
+              }
+              // If already sent, don't send any message
+            }
+          }
+        }
       }
 
       // No stalling needed - get and play best move
@@ -718,16 +922,22 @@ export class BughouseGame {
         console.log(`[PARTNER] Move ${moveNum}: ${move.from || 'drop'} to ${move.to} captures ${captured}`);
       }
       
-      // Check if this capture fulfills a piece request from partner board
+      // Check if this capture fulfills a stalling bot's request
       const capturedType = captured.toLowerCase() as PieceType;
-      const isPlayerBoard = board === this.playerBoard;
       
-      if (isPlayerBoard && this.pieceRequests.partnerRequests === capturedType) {
-        console.log(`[REQUEST] Player board captured ${capturedType} - fulfilling partner's request!`);
-        this.pieceRequests.partnerRequests = undefined; // Request fulfilled
-      } else if (!isPlayerBoard && this.pieceRequests.playerRequests === capturedType) {
-        console.log(`[REQUEST] Partner board captured ${capturedType} - fulfilling player's request!`);
-        this.pieceRequests.playerRequests = undefined; // Request fulfilled
+      // Check all bots to see if they were stalling for this piece
+      const botKeys: Array<'bot1' | 'partner' | 'bot2'> = ['bot1', 'partner', 'bot2'];
+      for (const botKey of botKeys) {
+        if (this.stallingState[botKey]?.piece === capturedType) {
+          const botName = this.botKeyToName(botKey);
+          console.log(`[STALL] ${botName} received ${capturedType} - stall fulfilled!`);
+          
+          if (this.onChatMessage) {
+            this.onChatMessage(botName, 'Thanks :)');
+          }
+          
+          delete this.stallingState[botKey];
+        }
       }
     }
 
@@ -776,6 +986,10 @@ export class BughouseGame {
         const engine = moveCount % 2 === 0 ? this.engines.partner1 : this.engines.partner2;
         
         console.log(`[PARTNER] ========== Move ${moveCount + 1} ==========`);
+        
+        // Check if any bot should abandon stalling due to time
+        this.checkTimeBasedStallAbandonment();
+        
         await this.makeEngineMove(this.partnerBoard, engine);
         
         // Update piece pools after partner move

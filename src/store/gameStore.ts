@@ -88,6 +88,15 @@ export const useGameStore = create<GameState>((set, get) => ({
         onChatMessage: (sender, message) => {
           get().addChatMessage(sender, message);
         },
+        getClockTimes: () => {
+          const state = get();
+          return {
+            playerWhite: state.playerWhiteTime,
+            playerBlack: state.playerBlackTime,
+            partnerWhite: state.partnerWhiteTime,
+            partnerBlack: state.partnerBlackTime,
+          };
+        },
       };
 
       const game = new BughouseGame(config);
