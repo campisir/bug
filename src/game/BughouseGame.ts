@@ -18,7 +18,10 @@ export const GameStatus = {
   IN_PROGRESS: 'in_progress',
   PLAYER_WON: 'player_won',
   PLAYER_LOST: 'player_lost',
+  PARTNER_WON: 'partner_won',
+  PARTNER_LOST: 'partner_lost',
   DRAW: 'draw',
+  FINISHED: 'finished',
 } as const;
 
 export type GameStatus = typeof GameStatus[keyof typeof GameStatus];
@@ -142,9 +145,17 @@ export class BughouseGame {
     // Update partner's piece pool with any captured pieces
     this.updatePiecePools();
 
+    // Check if game is over
+    await this.checkGameOver();
+
     // Trigger update callback
     if (this.onUpdate) {
       this.onUpdate();
+    }
+
+    // Only continue if game is still in progress
+    if (this.status !== GameStatus.IN_PROGRESS) {
+      return true;
     }
 
     // Engine responds on player board
@@ -153,13 +164,16 @@ export class BughouseGame {
     // Update piece pools after engine response
     this.updatePiecePools();
 
+    // Check again after engine move
+    await this.checkGameOver();
+
     // Trigger update callback
     if (this.onUpdate) {
       this.onUpdate();
     }
 
     // Start partner board playing if not already running
-    if (!this.isPartnerBoardPlaying) {
+    if (!this.isPartnerBoardPlaying && this.status === GameStatus.IN_PROGRESS) {
       this.playPartnerBoard().catch(err => console.error('Partner board error:', err));
     }
 
@@ -205,6 +219,14 @@ export class BughouseGame {
       this.onUpdate();
     }
 
+    // Check if game is over after drop
+    await this.checkGameOver();
+
+    // Only continue if game is still in progress
+    if (this.status !== GameStatus.IN_PROGRESS) {
+      return true;
+    }
+
     // Start partner board if not already playing
     if (!this.isPartnerBoardPlaying) {
       this.playPartnerBoard().catch(err => console.error('Partner board error:', err));
@@ -215,6 +237,9 @@ export class BughouseGame {
 
     // Update pools after engine response
     this.updatePiecePools();
+
+    // Check again after engine response
+    await this.checkGameOver();
 
     return true;
   }
@@ -238,6 +263,142 @@ export class BughouseGame {
    */
   getStatus(): GameStatus {
     return this.status;
+  }
+
+  /**
+   * Check if game is over due to checkmate or stalemate
+   */
+  private async checkGameOver(): Promise<void> {
+    if (this.status !== GameStatus.IN_PROGRESS) return;
+
+    // Check player board for true checkmate
+    const playerCheckmate = await this.isTrueCheckmate(this.playerBoard, this.engines.player);
+    if (playerCheckmate) {
+      const losingColor = this.playerBoard.getCurrentTurn();
+      if (losingColor === this.playerBoard.getPlayerColor()) {
+        this.status = GameStatus.PLAYER_LOST;
+      } else {
+        this.status = GameStatus.PLAYER_WON;
+      }
+      console.log(`[GAME] Player board TRUE checkmate: ${this.status}`);
+      return;
+    }
+
+    // Check for stalemate on player board
+    if (this.playerBoard.isStalemate()) {
+      this.status = GameStatus.DRAW;
+      console.log(`[GAME] Player board stalemate`);
+      return;
+    }
+
+    // Check partner board for true checkmate
+    const partnerCheckmate = await this.isTrueCheckmate(this.partnerBoard, this.engines.partner1);
+    if (partnerCheckmate) {
+      const losingColor = this.partnerBoard.getCurrentTurn();
+      if (losingColor === this.partnerBoard.getPlayerColor()) {
+        this.status = GameStatus.PARTNER_LOST;
+      } else {
+        this.status = GameStatus.PARTNER_WON;
+      }
+      console.log(`[GAME] Partner board TRUE checkmate: ${this.status}`);
+      return;
+    }
+
+    // Check for stalemate on partner board
+    if (this.partnerBoard.isStalemate()) {
+      this.status = GameStatus.DRAW;
+      console.log(`[GAME] Partner board stalemate`);
+      return;
+    }
+  }
+
+  /**
+   * Check if a position is a true checkmate in bughouse
+   * 
+   * In bughouse, checkmate is only final if adding a queen to the pool
+   * wouldn't allow the player to escape. This handles cases like:
+   * - Smothered mate: Still mate even with a queen (TRUE CHECKMATE)
+   * - Back-rank mate: Not mate if you could drop a piece (NOT TRUE CHECKMATE)
+   */
+  private async isTrueCheckmate(board: Board, engine: IChessEngine): Promise<boolean> {
+    // First check if Fairy-Stockfish thinks it's checkmate with current pool
+    if (!board.isCheckmate()) {
+      return false;
+    }
+
+    console.log(`[CHECKMATE] Position is checkmate by chess.js, verifying with queen drop test...`);
+
+    // Get the current turn (the player in checkmate)
+    const checkmatedColor = board.getCurrentTurn();
+    const pool = checkmatedColor === 'w' ? board.getWhitePiecePool() : board.getBlackPiecePool();
+
+    // Get current pool holdings
+    const currentPoolPieces = pool.getAllPieces();
+    console.log(`[CHECKMATE] Current pool for ${checkmatedColor}:`, Object.fromEntries(currentPoolPieces));
+
+    // Temporarily add a queen to the checkmated player's pool
+    pool.addPiece('q');
+    const testPoolPieces = pool.getAllPieces();
+    console.log(`[CHECKMATE] Test pool with extra queen:`, Object.fromEntries(testPoolPieces));
+
+    try {
+      // Build FEN with holdings notation for Fairy-Stockfish
+      // In bughouse FEN, holdings are appended after the position like: [Qq] for white Q and black q
+      const baseFen = board.getFen();
+      const fenParts = baseFen.split(' ');
+      
+      // Build holdings string for both colors
+      const whitePool = board.getWhitePiecePool().getAllPieces();
+      const blackPool = board.getBlackPiecePool().getAllPieces();
+      
+      let holdings = '';
+      // White pieces (uppercase)
+      ['Q', 'R', 'B', 'N', 'P'].forEach(piece => {
+        const count = whitePool.get(piece.toLowerCase() as any) || 0;
+        holdings += piece.repeat(count);
+      });
+      // Black pieces (lowercase)
+      ['q', 'r', 'b', 'n', 'p'].forEach(piece => {
+        const count = blackPool.get(piece as any) || 0;
+        holdings += piece.repeat(count);
+      });
+      
+      // Insert holdings into FEN (after castling rights, before en passant)
+      // Standard FEN: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1
+      // Bughouse FEN: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[Qq] w KQkq - 0 1
+      const positionFen = holdings ? `${fenParts[0]}[${holdings}]` : fenParts[0];
+      const modifiedFen = [positionFen, ...fenParts.slice(1)].join(' ');
+      
+      console.log(`[CHECKMATE] Testing with FEN: ${modifiedFen}`);
+
+      // Set up the position with the extra queen in holdings
+      await engine.setPosition(modifiedFen, []);
+
+      // Ask the engine to find a move with very short time
+      const move = await engine.getBestMove(500); // 500ms to find any legal move
+
+      console.log(`[CHECKMATE] Engine returned move:`, move);
+      console.log(`[CHECKMATE] move.from =`, JSON.stringify(move.from), `move.to =`, JSON.stringify(move.to));
+
+      // Remove the temporary queen
+      pool.removePiece('q');
+
+      if (!move || move.from === '(none)' || move.to === '(none)' || move.from === '0000') {
+        // No legal move even with a queen available = TRUE CHECKMATE
+        console.log(`[CHECKMATE] Still checkmate even with queen available - TRUE MATE`);
+        return true;
+      } else {
+        // A legal move exists with the queen = can potentially block/escape
+        console.log(`[CHECKMATE] Not true mate - could escape with move:`, JSON.stringify(move));
+        return false;
+      }
+    } catch (error) {
+      // Remove the temporary queen in case of error
+      pool.removePiece('q');
+      console.error(`[CHECKMATE] Error checking mate status:`, error);
+      // Default to false (don't end game on error)
+      return false;
+    }
   }
 
   pause(): void {
@@ -589,7 +750,10 @@ export class BughouseGame {
         // Update piece pools after partner move
         this.updatePiecePools();
         
-        // Trigger UI update
+        // Check if game is over
+        await this.checkGameOver();
+        
+        // Notify update
         if (this.onUpdate) {
           this.onUpdate();
         }
@@ -597,11 +761,9 @@ export class BughouseGame {
         // Add a delay to prevent overwhelming the engines and UI
         await new Promise(resolve => setTimeout(resolve, 500));
         
-        // Check for checkmate/stalemate on partner board
-        // TODO: Implement proper game over detection
-        // For now, limit to prevent infinite loop during testing
-        if (this.partnerBoard.getMoveHistory().length > 100) {
-          console.log('Partner board reached move limit');
+        // Exit if game is over
+        if (this.status !== GameStatus.IN_PROGRESS) {
+          console.log(`Partner board stopped: ${this.status}`);
           break;
         }
       }

@@ -184,6 +184,27 @@ export class Board {
   }
 
   /**
+   * Check if the game is over (checkmate or stalemate)
+   */
+  isGameOver(): boolean {
+    return this.chess.isGameOver();
+  }
+
+  /**
+   * Check if the current position is checkmate
+   */
+  isCheckmate(): boolean {
+    return this.chess.isCheckmate();
+  }
+
+  /**
+   * Check if the current position is stalemate
+   */
+  isStalemate(): boolean {
+    return this.chess.isStalemate();
+  }
+
+  /**
    * Clone this board
    */
   clone(): Board {

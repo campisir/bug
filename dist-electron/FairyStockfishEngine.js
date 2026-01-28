@@ -164,9 +164,16 @@ export class FairyStockfishEngine {
         this.pendingCallbacks.set(trigger, callback);
     }
     parseMove(moveStr) {
+        // Check for special cases first
+        if (!moveStr || moveStr === '(none)' || moveStr === '0000') {
+            return { from: '(none)', to: '(none)' };
+        }
         if (moveStr.includes('@')) {
             const [piece, square] = moveStr.split('@');
             return { from: '', to: square, drop: piece };
+        }
+        if (moveStr.length < 4) {
+            return { from: '(none)', to: '(none)' };
         }
         const from = moveStr.substring(0, 2);
         const to = moveStr.substring(2, 4);

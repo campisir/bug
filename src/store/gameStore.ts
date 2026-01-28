@@ -221,7 +221,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   tickClock: () => {
-    const { gameStatus, playerTurn, partnerTurn, playerWhiteTime, playerBlackTime, partnerWhiteTime, partnerBlackTime } = get();
+    const { gameStatus, playerTurn, partnerTurn, playerWhiteTime, playerBlackTime, partnerWhiteTime, partnerBlackTime, playerBoard, game } = get();
     
     if (gameStatus !== GameStatus.IN_PROGRESS) return;
 
@@ -232,13 +232,31 @@ export const useGameStore = create<GameState>((set, get) => ({
       const newTime = Math.max(0, playerWhiteTime - 100);
       updates.playerWhiteTime = newTime;
       if (newTime === 0) {
-        updates.gameStatus = GameStatus.FINISHED;
+        // White ran out of time on player board
+        if (playerBoard?.getPlayerColor() === 'w') {
+          updates.gameStatus = GameStatus.PLAYER_LOST;
+        } else {
+          updates.gameStatus = GameStatus.PLAYER_WON;
+        }
+        // Stop the game
+        if (game) {
+          game.pause();
+        }
       }
     } else if (playerTurn === 'b' && playerBlackTime > 0) {
       const newTime = Math.max(0, playerBlackTime - 100);
       updates.playerBlackTime = newTime;
       if (newTime === 0) {
-        updates.gameStatus = GameStatus.FINISHED;
+        // Black ran out of time on player board
+        if (playerBoard?.getPlayerColor() === 'b') {
+          updates.gameStatus = GameStatus.PLAYER_LOST;
+        } else {
+          updates.gameStatus = GameStatus.PLAYER_WON;
+        }
+        // Stop the game
+        if (game) {
+          game.pause();
+        }
       }
     }
     
@@ -248,12 +266,20 @@ export const useGameStore = create<GameState>((set, get) => ({
       updates.partnerWhiteTime = newTime;
       if (newTime === 0) {
         updates.gameStatus = GameStatus.FINISHED;
+        // Stop the game
+        if (game) {
+          game.pause();
+        }
       }
     } else if (partnerTurn === 'b' && partnerBlackTime > 0) {
       const newTime = Math.max(0, partnerBlackTime - 100);
       updates.partnerBlackTime = newTime;
       if (newTime === 0) {
         updates.gameStatus = GameStatus.FINISHED;
+        // Stop the game
+        if (game) {
+          game.pause();
+        }
       }
     }
     

@@ -222,9 +222,18 @@ export class FairyStockfishEngine implements IChessEngine {
   }
 
   private parseMove(moveStr: string): EngineMove {
+    // Check for special cases first
+    if (!moveStr || moveStr === '(none)' || moveStr === '0000') {
+      return { from: '(none)', to: '(none)' };
+    }
+
     if (moveStr.includes('@')) {
       const [piece, square] = moveStr.split('@');
       return { from: '', to: square, drop: piece };
+    }
+
+    if (moveStr.length < 4) {
+      return { from: '(none)', to: '(none)' };
     }
 
     const from = moveStr.substring(0, 2);

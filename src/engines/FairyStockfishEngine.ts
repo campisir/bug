@@ -68,9 +68,11 @@ export class FairyStockfishEngine implements IChessEngine {
       this.sendCommand(`go movetime ${timeMs}`);
       
       this.waitForResponse('bestmove', (response) => {
+        console.log('[ENGINE] Bestmove response:', response);
         const match = response.match(/bestmove\s+(\S+)/);
         if (match) {
           const moveStr = match[1];
+          console.log('[ENGINE] Extracted move string:', JSON.stringify(moveStr));
           resolve(this.parseMove(moveStr));
         } else {
           reject(new Error('Failed to parse best move'));
@@ -177,6 +179,20 @@ export class FairyStockfishEngine implements IChessEngine {
   }
 
   private parseMove(moveStr: string): EngineMove {
+    console.log('[ENGINE] parseMove input:', JSON.stringify(moveStr), 'length:', moveStr.length);
+    
+    // Handle null/no move cases - check this FIRST
+    if (!moveStr || moveStr === '(none)' || moveStr === '0000') {
+      console.log('[ENGINE] Detected no-move case');
+      return { from: '(none)', to: '(none)' };
+    }
+
+    // Now check for minimum length for valid moves
+    if (moveStr.length < 4) {
+      console.log('[ENGINE] Move string too short');
+      return { from: '(none)', to: '(none)' };
+    }
+
     // Handle piece drops (e.g., P@e4 for bughouse)
     if (moveStr.includes('@')) {
       const [piece, square] = moveStr.split('@');
@@ -188,6 +204,7 @@ export class FairyStockfishEngine implements IChessEngine {
     const to = moveStr.substring(2, 4);
     const promotion = moveStr.length > 4 ? moveStr[4] : undefined;
 
+    console.log('[ENGINE] Parsed as standard move:', { from, to, promotion });
     return { from, to, promotion };
   }
 
