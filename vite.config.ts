@@ -8,4 +8,8 @@ export default defineConfig({
   build: {
     outDir: 'dist',
   },
+  server: {
+    host: true, // Expose to network
+    port: 5173,
+  },
 })

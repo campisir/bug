@@ -499,16 +499,26 @@ export class BughouseGame {
     await engine.setPosition(fenWithCurrentHoldings, []);
     const currentEval = await engine.getEvaluation(EVAL_DEPTH);
     
-    console.log(`[STALL] ${botName} evaluation: ${currentEval.isMate ? `mate ${currentEval.score}` : `${currentEval.score}cp`}`);
+    // Check which board to determine score convention
+    const isPlayerBoard = board === this.playerBoard;
+    const currentTurn = board.getCurrentTurn();
     
-    // If already delivering mate (NEGATIVE score in bughouse), don't stall
-    if (currentEval.isMate && currentEval.score < 0) {
-      console.log(`[STALL] ${botName} is mating in ${Math.abs(currentEval.score)}, no stalling needed`);
+    console.log(`[STALL] ${botName} (board: ${isPlayerBoard ? 'player' : 'partner'}, turn: ${currentTurn}) evaluation: ${currentEval.isMate ? `mate ${currentEval.score}` : `${currentEval.score}cp`}`);
+    
+    // Score interpretation varies by board:
+    // Player board (Bot 1): standard UCI (mate -x = mating, mate +x = being mated)
+    // Partner board (Bot 2/Partner): inverted (mate +x = being mated, mate -x = mating)
+    const scoreMultiplier = isPlayerBoard ? -1 : 1;
+    const adjustedScore = currentEval.score * scoreMultiplier;
+    
+    // If already delivering mate (adjusted NEGATIVE score), don't stall
+    if (currentEval.isMate && adjustedScore < 0) {
+      console.log(`[STALL] ${botName} is mating in ${Math.abs(adjustedScore)}, no stalling needed`);
       return null;
     }
     
-    // Check for mate-in-1 with no escape (score is +1, meaning getting mated in 1)
-    if (currentEval.isMate && currentEval.score === 1) {
+    // Check for mate-in-1 with no escape (adjusted score is +1, meaning getting mated in 1)
+    if (currentEval.isMate && adjustedScore === 1) {
       console.log(`[STALL] ${botName} is getting mated in 1, checking if any piece saves...`);
       // Test if any piece saves us
       const piecesToTry: PieceType[] = ['p', 'n', 'b', 'r', 'q'];
@@ -521,9 +531,10 @@ export class BughouseGame {
         
         await engine.setPosition(fenWithHypothetical, []);
         const hypotheticalEval = await engine.getEvaluation(EVAL_DEPTH);
+        const hypotheticalAdjusted = hypotheticalEval.score * scoreMultiplier;
         
-        // Check if adding this piece either removes mate or flips it to us mating (negative)
-        if (!hypotheticalEval.isMate || hypotheticalEval.score < 0) {
+        // Check if adding this piece either removes mate or flips it to us mating (negative adjusted)
+        if (!hypotheticalEval.isMate || hypotheticalAdjusted < 0) {
           canBeSaved = true;
           console.log(`[STALL] ${botName} CAN be saved by ${pieceType}`);
           break;
@@ -546,33 +557,38 @@ export class BughouseGame {
       
       await engine.setPosition(fenWithHypothetical, []);
       const hypotheticalEval = await engine.getEvaluation(EVAL_DEPTH);
+      const hypotheticalAdjusted = hypotheticalEval.score * scoreMultiplier;
       
-      // Scenario 1: Forces mate (current NOT mating, with piece IS mating with NEGATIVE score)
-      const forcesMate = !currentEval.isMate && hypotheticalEval.isMate && hypotheticalEval.score < 0;
+      // Scenario 1: Forces mate (current NOT mating, with piece IS mating with adjusted NEGATIVE score)
+      const forcesMate = !currentEval.isMate && hypotheticalEval.isMate && hypotheticalAdjusted < 0;
       if (forcesMate) {
-        console.log(`[STALL] ${botName} with ${pieceType} FORCES mate in ${Math.abs(hypotheticalEval.score)}`);
+        console.log(`[STALL] ${botName} with ${pieceType} FORCES mate in ${Math.abs(hypotheticalAdjusted)}`);
         const stallChance = this.getStallProbability(pieceType, 'forces_mate');
         const shouldStall = upOnTime && Math.random() < stallChance;
-        return { piece: pieceType, scenario: 'forces_mate', shouldStall, mateDistance: Math.abs(hypotheticalEval.score) };
+        return { piece: pieceType, scenario: 'forces_mate', shouldStall, mateDistance: Math.abs(hypotheticalAdjusted) };
       }
       
-      // Scenario 2: Saves from mate (current getting mated with POSITIVE score, with piece either not mate or mating with NEGATIVE score)
-      const savesFromMate = currentEval.isMate && currentEval.score > 0 && 
-                           (!hypotheticalEval.isMate || hypotheticalEval.score < 0);
+      // Scenario 2: Saves from mate (current getting mated with adjusted POSITIVE score, with piece either not mate or mating with adjusted NEGATIVE score)
+      const savesFromMate = currentEval.isMate && adjustedScore > 0 && 
+                           (!hypotheticalEval.isMate || hypotheticalAdjusted < 0);
       if (savesFromMate) {
-        console.log(`[STALL] ${botName} with ${pieceType} SAVES from mate ${currentEval.score} -> ${hypotheticalEval.isMate ? `mate ${hypotheticalEval.score}` : `${hypotheticalEval.score}cp`}`);
-        const isMateInOne = currentEval.score === 1;
+        console.log(`[STALL] ${botName} with ${pieceType} SAVES from mate ${adjustedScore} -> ${hypotheticalEval.isMate ? `mate ${hypotheticalAdjusted}` : `${hypotheticalEval.score}cp`}`);
+        const isMateInOne = adjustedScore === 1;
         const stallChance = isMateInOne ? 1.0 : this.getStallProbability(pieceType, 'saves_from_mate');
         const shouldStall = upOnTime && Math.random() < stallChance;
-        return { piece: pieceType, scenario: isMateInOne ? 'saves_mate_in_1' : 'saves_from_mate', shouldStall, mateDistance: currentEval.score };
+        return { piece: pieceType, scenario: isMateInOne ? 'saves_mate_in_1' : 'saves_from_mate', shouldStall, mateDistance: adjustedScore };
       }
       
       // Scenario 3: Turns lost to winning (only for p, n, b)
+      // Use adjusted scores for centipawn evaluation too
       if (['p', 'n', 'b'].includes(pieceType)) {
-        const turnsLostToWinning = !currentEval.isMate && currentEval.score > LOSING_THRESHOLD &&
-                                   !hypotheticalEval.isMate && hypotheticalEval.score < -WINNING_THRESHOLD;
+        const currentCpAdjusted = currentEval.isMate ? 0 : adjustedScore;
+        const hypotheticalCpAdjusted = hypotheticalEval.isMate ? 0 : hypotheticalAdjusted;
+        
+        const turnsLostToWinning = !currentEval.isMate && currentCpAdjusted > LOSING_THRESHOLD &&
+                                   !hypotheticalEval.isMate && hypotheticalCpAdjusted < -WINNING_THRESHOLD;
         if (turnsLostToWinning) {
-          console.log(`[STALL] ${botName} with ${pieceType} turns LOST (${currentEval.score}cp) to WINNING (${hypotheticalEval.score}cp)`);
+          console.log(`[STALL] ${botName} with ${pieceType} turns LOST (${currentCpAdjusted}cp) to WINNING (${hypotheticalCpAdjusted}cp)`);
           const stallChance = this.getStallProbability(pieceType, 'lost_to_winning');
           const shouldStall = upOnTime && Math.random() < stallChance;
           return { piece: pieceType, scenario: 'lost_to_winning', shouldStall };
