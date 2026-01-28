@@ -1,0 +1,101 @@
+.chat-box {
+  background: rgba(40, 44, 52, 0.95);
+  border-radius: 8px;
+  padding: 16px;
+  width: 300px;
+  height: 400px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+}
+
+.chat-header {
+  border-bottom: 2px solid #4a5568;
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+
+.chat-header h3 {
+  margin: 0;
+  color: #e2e8f0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-messages::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-messages::-webkit-scrollbar-track {
+  background: #2d3748;
+  border-radius: 3px;
+}
+
+.chat-messages::-webkit-scrollbar-thumb {
+  background: #4a5568;
+  border-radius: 3px;
+}
+
+.chat-messages::-webkit-scrollbar-thumb:hover {
+  background: #718096;
+}
+
+.chat-empty {
+  color: #718096;
+  font-style: italic;
+  text-align: center;
+  margin-top: 20px;
+}
+
+.chat-message {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(74, 85, 104, 0.3);
+  line-height: 1.5;
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.chat-sender {
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.chat-text {
+  color: #e2e8f0;
+}
+
+/* Different colors for different senders */
+.chat-message.partner .chat-sender {
+  color: #48bb78; /* Green for partner */
+}
+
+.chat-message.bot-1 .chat-sender {
+  color: #f56565; /* Red for opponent */
+}
+
+.chat-message.bot-2 .chat-sender {
+  color: #ed8936; /* Orange for partner's opponent */
+}
+
+.chat-message.system .chat-sender {
+  color: #9f7aea; /* Purple for system messages */
+}

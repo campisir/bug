@@ -4,6 +4,9 @@ import { BughouseGame, GameStatus } from '../game/BughouseGame';
 import type { BughouseGameConfig } from '../game/BughouseGame';
 import type { PieceType } from '../game/PiecePool';
 import { ElectronIPCEngine } from '../engines/ElectronIPCEngine';
+import type { ChatMessage } from '../components/ChatBox';
+
+export type { ChatMessage };
 
 interface GameState {
   game: BughouseGame | null;
@@ -21,6 +24,7 @@ interface GameState {
   selectedPiece: PieceType | null;
   playerLastMove: [string, string] | null;
   partnerLastMove: [string, string] | null;
+  chatMessages: ChatMessage[];
   
   // Clock state (in milliseconds)
   playerWhiteTime: number;
@@ -38,6 +42,7 @@ interface GameState {
   updateBoards: () => void;
   reset: () => void;
   tickClock: () => void;
+  addChatMessage: (sender: ChatMessage['sender'], message: string) => void;
 }
 
 /**
@@ -61,6 +66,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   selectedPiece: null,
   playerLastMove: null,
   partnerLastMove: null,
+  chatMessages: [],
   
   // Initialize clocks to 5 minutes (300000 ms)
   playerWhiteTime: 300000,
@@ -79,6 +85,9 @@ export const useGameStore = create<GameState>((set, get) => ({
         partnerEngine1: new ElectronIPCEngine('partner-engine-1', enginePath),
         partnerEngine2: new ElectronIPCEngine('partner-engine-2', enginePath),
         thinkingTimeMs: 2000, // Increased to 2 seconds to prevent timeouts
+        onChatMessage: (sender, message) => {
+          get().addChatMessage(sender, message);
+        },
       };
 
       const game = new BughouseGame(config);
@@ -230,6 +239,20 @@ export const useGameStore = create<GameState>((set, get) => ({
       partnerWhiteTime: 300000,
       partnerBlackTime: 300000,
     });
+  },
+
+  addChatMessage: (sender: ChatMessage['sender'], message: string) => {
+    set((state) => ({
+      chatMessages: [
+        ...state.chatMessages,
+        {
+          id: Date.now() + Math.random(),
+          sender,
+          message,
+          timestamp: Date.now(),
+        },
+      ],
+    }));
   },
 
   tickClock: () => {

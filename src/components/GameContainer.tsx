@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ChessBoard } from './ChessBoard';
 import { PiecePoolDisplay } from './PiecePoolDisplay';
 import { ChessClock } from './ChessClock';
+import { ChatBox } from './ChatBox';
 import { useGameStore } from '../store/gameStore';
 import type { PieceType } from '../game/PiecePool';
 
@@ -31,6 +32,7 @@ export function GameContainer() {
   const partnerBlackTime = useGameStore((state) => state.partnerBlackTime);
   const playerLastMove = useGameStore((state) => state.playerLastMove);
   const partnerLastMove = useGameStore((state) => state.partnerLastMove);
+  const chatMessages = useGameStore((state) => state.chatMessages);
   
   // Get actions (these don't cause re-renders)
   const initialize = useGameStore((state) => state.initialize);
@@ -224,6 +226,11 @@ export function GameContainer() {
             </div>
           </div>
         </div>
+
+        {/* Chat Box Section */}
+        <div className="chat-section">
+          <ChatBox messages={chatMessages} />
+        </div>
       </div>
 
       <style>{`
@@ -264,6 +271,13 @@ export function GameContainer() {
           gap: 30px;
           justify-content: center;
           align-items: flex-start;
+        }
+
+        .chat-section {
+          flex-shrink: 0;
+          align-self: flex-start;
+          position: sticky;
+          top: 20px;
         }
 
         .board-section {

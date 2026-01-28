@@ -33,6 +33,7 @@ export interface BughouseGameConfig {
   partnerEngine1: IChessEngine; // First bot on partner board
   partnerEngine2: IChessEngine; // Second bot on partner board
   thinkingTimeMs?: number; // Time for engine to think (default: 1000ms)
+  onChatMessage?: (sender: 'Partner' | 'Bot 1' | 'Bot 2' | 'System', message: string) => void;
 }
 
 export class BughouseGame {
@@ -46,6 +47,7 @@ export class BughouseGame {
   private status: GameStatus = GameStatus.NOT_STARTED;
   private thinkingTimeMs: number;
   private onUpdate?: () => void;
+  private onChatMessage?: (sender: 'Partner' | 'Bot 1' | 'Bot 2' | 'System', message: string) => void;
   private isPartnerBoardPlaying: boolean = false;
   private isPaused: boolean = false;
   private lastPlayerMoveCount: number = 0;
@@ -74,6 +76,7 @@ export class BughouseGame {
     };
 
     this.thinkingTimeMs = config.thinkingTimeMs || 1000;
+    this.onChatMessage = config.onChatMessage;
   }
 
   /**
@@ -643,9 +646,27 @@ export class BughouseGame {
         if (isPlayerBoard) {
           this.pieceRequests.playerRequests = requestedPiece;
           console.log(`[REQUEST] Player board requests ${requestedPiece} from partner`);
+          if (this.onChatMessage) {
+            this.onChatMessage('Bot 1', `Can you capture a ${requestedPiece}?`);
+            // Partner's response
+            setTimeout(() => {
+              if (this.onChatMessage) {
+                this.onChatMessage('Partner', `I will try to hold it :)`);
+              }
+            }, 500);
+          }
         } else {
           this.pieceRequests.partnerRequests = requestedPiece;
           console.log(`[REQUEST] Partner board requests ${requestedPiece} from player`);
+          if (this.onChatMessage) {
+            this.onChatMessage('Partner', `Could you get me a ${requestedPiece}?`);
+            // Bot 2's response
+            setTimeout(() => {
+              if (this.onChatMessage) {
+                this.onChatMessage('Bot 2', `No ${requestedPiece}`);
+              }
+            }, 500);
+          }
         }
         
         // Get a stalling move instead of the best move
