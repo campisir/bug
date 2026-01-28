@@ -19,6 +19,8 @@ interface GameState {
   partnerBlackPiecePool: Record<PieceType, number> | null;
   gameStatus: GameStatus;
   selectedPiece: PieceType | null;
+  playerLastMove: [string, string] | null;
+  partnerLastMove: [string, string] | null;
   
   // Clock state (in milliseconds)
   playerWhiteTime: number;
@@ -57,6 +59,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   partnerBlackPiecePool: null,
   gameStatus: GameStatus.NOT_STARTED as GameStatus,
   selectedPiece: null,
+  playerLastMove: null,
+  partnerLastMove: null,
   
   // Initialize clocks to 5 minutes (300000 ms)
   playerWhiteTime: 300000,
@@ -152,6 +156,12 @@ export const useGameStore = create<GameState>((set, get) => ({
     const playerTurn = playerBoard.getCurrentTurn();
     const partnerTurn = partnerBoard.getCurrentTurn();
     
+    // Get last moves for highlighting
+    const playerMove = playerBoard.getLastMove();
+    const partnerMove = partnerBoard.getLastMove();
+    const playerLastMove = playerMove ? [playerMove.from || playerMove.to, playerMove.to] as [string, string] : null;
+    const partnerLastMove = partnerMove ? [partnerMove.from || partnerMove.to, partnerMove.to] as [string, string] : null;
+    
     const playerWhitePool = playerBoard.getWhitePiecePool().getAllPieces();
     const playerBlackPool = playerBoard.getBlackPiecePool().getAllPieces();
     const partnerWhitePool = partnerBoard.getWhitePiecePool().getAllPieces();
@@ -193,6 +203,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       partnerFen,
       playerTurn,
       partnerTurn,
+      playerLastMove,
+      partnerLastMove,
       playerWhitePiecePool,
       playerBlackPiecePool,
       partnerWhitePiecePool,

@@ -29,6 +29,8 @@ export function GameContainer() {
   const playerBlackTime = useGameStore((state) => state.playerBlackTime);
   const partnerWhiteTime = useGameStore((state) => state.partnerWhiteTime);
   const partnerBlackTime = useGameStore((state) => state.partnerBlackTime);
+  const playerLastMove = useGameStore((state) => state.playerLastMove);
+  const partnerLastMove = useGameStore((state) => state.partnerLastMove);
   
   // Get actions (these don't cause re-renders)
   const initialize = useGameStore((state) => state.initialize);
@@ -38,6 +40,8 @@ export function GameContainer() {
   const pausePartnerBoard = useGameStore((state) => state.pausePartnerBoard);
   const resumePartnerBoard = useGameStore((state) => state.resumePartnerBoard);
   const tickClock = useGameStore((state) => state.tickClock);
+
+  const [showGameOver, setShowGameOver] = useState(true);
 
   useEffect(() => {
     console.log('[GameContainer] Component mounted');
@@ -57,6 +61,13 @@ export function GameContainer() {
 
     return () => clearInterval(interval);
   }, [tickClock]);
+
+  useEffect(() => {
+    // Show game over overlay when game ends
+    if (gameStatus !== 'in_progress' && gameStatus !== 'not_started') {
+      setShowGameOver(true);
+    }
+  }, [gameStatus]);
 
   const handlePlayerMove = (from: string, to: string, promotion?: string) => {
     makeMove(from, to, promotion);
@@ -94,7 +105,7 @@ export function GameContainer() {
       </div>
 
       {/* Game Over Overlay */}
-      {gameStatus !== 'in_progress' && gameStatus !== 'not_started' && (
+      {showGameOver && gameStatus !== 'in_progress' && gameStatus !== 'not_started' && (
         <div className="game-over-overlay">
           <div className="game-over-modal">
             <h2>Game Over!</h2>
@@ -106,6 +117,9 @@ export function GameContainer() {
               {gameStatus === 'draw' && '🤝 Draw'}
               {gameStatus === 'finished' && '⏱️ Time Out'}
             </p>
+            <button onClick={() => setShowGameOver(false)} className="close-button">
+              Close
+            </button>
           </div>
         </div>
       )}
@@ -142,7 +156,8 @@ export function GameContainer() {
                     orientation={playerBoard.getPlayerColor() === 'w' ? 'white' : 'black'}
                     onMove={handlePlayerMove}
                     onSquareClick={handleSquareClick}
-                    movable={playerTurn === playerBoard.getPlayerColor() && !selectedPiece}
+                    movable={!selectedPiece}
+                    lastMove={playerLastMove}
                     debug={true}
                   />
                 )}
@@ -182,6 +197,7 @@ export function GameContainer() {
                     fen={partnerFen}
                     orientation={partnerBoard.getPlayerColor() === 'w' ? 'white' : 'black'}
                     movable={false}
+                    lastMove={partnerLastMove}
                   />
                 )}
               </div>

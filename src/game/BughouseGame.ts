@@ -1,6 +1,7 @@
 import { Board } from './Board';
 import type { IChessEngine } from '../engines/IChessEngine';
 import type { PieceType } from './PiecePool';
+import { Chess } from 'chess.js';
 
 /**
  * Bughouse Game
@@ -200,6 +201,15 @@ export class BughouseGame {
     if (!playerPool.removePiece(pieceType)) {
       console.log(`[DROP] Piece ${pieceType} not available in pool`);
       return false; // Piece not available
+    }
+
+    // Validate the drop before committing
+    const currentFen = this.playerBoard.getFen();
+    if (!this.isDropLegal(currentFen, square, pieceType, this.playerBoard.getPlayerColor())) {
+      console.log(`[DROP] Drop is not legal on ${square}`);
+      // Return the piece to the pool
+      playerPool.addPiece(pieceType);
+      return false;
     }
 
     console.log(`[DROP] After removePiece - ${pieceType} count:`, playerPool.getCount(pieceType));
@@ -817,5 +827,118 @@ export class BughouseGame {
       }
       this.lastPartnerMoveCount = currentPartnerMoves;
     }
+  }
+
+  /**
+   * Check if a piece drop is legal
+   */
+  private isDropLegal(fen: string, square: string, pieceType: PieceType, playerColor: 'w' | 'b'): boolean {
+    try {
+      // Parse the FEN to check if square is occupied
+      const fenParts = fen.split(' ');
+      const board = fenParts[0];
+      
+      // Convert square to board position
+      const file = square.charCodeAt(0) - 'a'.charCodeAt(0); // 0-7
+      const rank = 8 - parseInt(square[1]); // 0-7 (rank 8 = index 0)
+      
+      // Parse board to check if square is occupied
+      const ranks = board.split('/');
+      let currentFile = 0;
+      const rankStr = ranks[rank];
+      
+      for (const char of rankStr) {
+        if (char >= '1' && char <= '8') {
+          const emptySquares = parseInt(char);
+          if (currentFile <= file && file < currentFile + emptySquares) {
+            // Square is empty, continue validation
+            break;
+          }
+          currentFile += emptySquares;
+        } else {
+          if (currentFile === file) {
+            // Square is occupied
+            console.log(`[DROP] Square ${square} is occupied`);
+            return false;
+          }
+          currentFile++;
+        }
+      }
+      
+      // Create a test FEN with the piece dropped
+      const testFen = this.createDropFEN(fen, square, pieceType, playerColor);
+      
+      // Use chess.js to validate the position is legal (not in check if we're in check)
+      const chess = new Chess();
+      
+      try {
+        chess.load(testFen);
+        
+        // Check if the player's king is in check after the drop
+        // We cannot make a drop that leaves our king in check
+        const isInCheckAfter = chess.isCheck();
+        
+        if (isInCheckAfter) {
+          console.log(`[DROP] Would leave king in check`);
+          return false;
+        }
+        
+        return true;
+      } catch (e) {
+        console.log(`[DROP] Invalid FEN after drop:`, e);
+        return false;
+      }
+    } catch (error) {
+      console.error('[DROP] Error validating drop:', error);
+      return false;
+    }
+  }
+  
+  /**
+   * Create a FEN with a piece dropped on a square
+   */
+  private createDropFEN(fen: string, square: string, pieceType: PieceType, playerColor: 'w' | 'b'): string {
+    const fenParts = fen.split(' ');
+    const board = fenParts[0];
+    
+    const file = square.charCodeAt(0) - 'a'.charCodeAt(0);
+    const rank = 8 - parseInt(square[1]);
+    
+    const ranks = board.split('/');
+    const rankStr = ranks[rank];
+    
+    // Insert the piece into the rank
+    let newRank = '';
+    let currentFile = 0;
+    let inserted = false;
+    
+    for (const char of rankStr) {
+      if (char >= '1' && char <= '8') {
+        const emptySquares = parseInt(char);
+        if (!inserted && currentFile <= file && file < currentFile + emptySquares) {
+          // Insert piece here
+          const before = file - currentFile;
+          const after = emptySquares - before - 1;
+          
+          if (before > 0) newRank += before.toString();
+          newRank += playerColor === 'w' ? pieceType.toUpperCase() : pieceType.toLowerCase();
+          if (after > 0) newRank += after.toString();
+          
+          inserted = true;
+          currentFile += emptySquares;
+        } else {
+          newRank += char;
+          currentFile += emptySquares;
+        }
+      } else {
+        newRank += char;
+        currentFile++;
+      }
+    }
+    
+    ranks[rank] = newRank;
+    fenParts[0] = ranks.join('/');
+    
+    return fenParts.join(' ');
   }
 }

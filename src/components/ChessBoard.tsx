@@ -15,6 +15,7 @@ interface ChessBoardProps {
   onDrop?: (piece: string, square: string) => void;
   movable?: boolean;
   pocketPieces?: Map<string, number>; // For piece drops
+  lastMove?: [string, string] | null; // Last move to highlight [from, to]
   debug?: boolean; // Enable debug logging
 }
 
@@ -30,6 +31,7 @@ export function ChessBoard({
   onMove,
   onSquareClick,
   movable = true,
+  lastMove = null,
   debug = false,
 }: ChessBoardProps) {
   const boardRef = useRef<HTMLDivElement>(null);
@@ -99,7 +101,16 @@ export function ChessBoard({
         duration: 200,
       },
       premovable: {
-        enabled: false,
+        enabled: true,
+        showDests: true,
+        events: {
+          set: (orig, dest) => {
+            console.log('[Premove] Set:', orig, dest);
+          },
+          unset: () => {
+            console.log('[Premove] Unset');
+          },
+        },
       },
     };
 
@@ -135,15 +146,23 @@ export function ChessBoard({
         movable: {
           free: false,
           color: movable ? orientation : undefined,
-          dests: movable ? legalMoves : new Map(),
+          dests: legalMoves,
         },
         draggable: {
           enabled: movable,
           showGhost: true,
         },
+        lastMove: lastMove || undefined,
       });
+      
+      // Try to play premove if it's now our turn and we have one set
+      if (turn === orientation) {
+        setTimeout(() => {
+          chessgroundRef.current?.playPremove();
+        }, 10);
+      }
     }
-  }, [fen, movable, orientation]);
+  }, [fen, movable, orientation, lastMove]);
 
   // Update orientation
   useEffect(() => {
