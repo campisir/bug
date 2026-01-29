@@ -484,6 +484,8 @@ export class BughouseGame {
     const EVAL_DEPTH = 12;
     const LOSING_THRESHOLD = 300; // Position is "lost" if eval > +300cp (positive = bad)
     const WINNING_THRESHOLD = 200; // Position is "significantly winning" if eval < -200cp (negative = good)
+    const LONG_MATE_THRESHOLD = 5; // Treat mate distances > 5 as winning positions instead of mates
+    const LONG_MATE_CP_VALUE = 5000; // Centipawn value to assign to long mates
     
     // Get diagonal player's time
     const times = this.getClockTimes?.();
@@ -507,10 +509,18 @@ export class BughouseGame {
     await engine.setPosition(fenWithCurrentHoldings, []);
     const currentEval = await engine.getEvaluation(EVAL_DEPTH);
     
+    // Convert long mates (> 5 moves) to centipawn values
+    let currentIsMate = currentEval.isMate;
+    let currentScore = currentEval.score;
+    if (currentEval.isMate && Math.abs(currentEval.score) > LONG_MATE_THRESHOLD) {
+      currentIsMate = false;
+      currentScore = currentEval.score > 0 ? LONG_MATE_CP_VALUE : -LONG_MATE_CP_VALUE;
+    }
+    
     const isPlayerBoard = board === this.playerBoard;
     const currentTurn = board.getCurrentTurn();
     
-    console.log(`[STALL] ${botName} (board: ${isPlayerBoard ? 'player' : 'partner'}, turn: ${currentTurn}) evaluation: ${currentEval.isMate ? `mate ${currentEval.score}` : `${currentEval.score}cp`}`);
+    console.log(`[STALL] ${botName} (board: ${isPlayerBoard ? 'player' : 'partner'}, turn: ${currentTurn}) evaluation: ${currentEval.isMate ? `mate ${currentEval.score}` : `${currentEval.score}cp`}${currentEval.isMate && Math.abs(currentEval.score) > LONG_MATE_THRESHOLD ? ' (treated as winning position)' : ''}`);
     
     // Score interpretation differs for mate vs centipawn:
     // MATE SCORES: mate +X = side to move mates in X, mate -X = side to move gets mated in X
@@ -521,17 +531,17 @@ export class BughouseGame {
     //   - Positive = good for WHITE, Negative = good for BLACK
     //   - If WHITE to move: flip (multiply by -1) so winning is negative
     //   - If BLACK to move: keep (multiply by 1) so winning is negative
-    const scoreMultiplier = currentEval.isMate ? 1 : (currentTurn === 'w' ? -1 : 1);
-    const adjustedScore = currentEval.score * scoreMultiplier;
+    const scoreMultiplier = currentIsMate ? 1 : (currentTurn === 'w' ? -1 : 1);
+    const adjustedScore = currentScore * scoreMultiplier;
     
-    // If already delivering mate (positive mate score), don't stall
-    if (currentEval.isMate && adjustedScore > 0) {
+    // If already delivering mate (positive mate score <= 5 moves), don't stall
+    if (currentIsMate && adjustedScore > 0) {
       console.log(`[STALL] ${botName} is mating in ${Math.abs(adjustedScore)}, no stalling needed`);
       return null;
     }
     
     // Check for mate-in-1 with no escape (negative mate score means getting mated)
-    if (currentEval.isMate && adjustedScore === -1) {
+    if (currentIsMate && adjustedScore === -1) {
       console.log(`[STALL] ${botName} is getting mated in 1, checking if any piece saves...`);
       // Test if any piece saves us
       const piecesToTry: PieceType[] = ['p', 'n', 'b', 'r', 'q'];
@@ -544,10 +554,20 @@ export class BughouseGame {
         
         await engine.setPosition(fenWithHypothetical, []);
         const hypotheticalEval = await engine.getEvaluation(EVAL_DEPTH);
-        const hypotheticalAdjusted = hypotheticalEval.score * scoreMultiplier;
         
-        // Check if adding this piece either removes mate or flips it to us mating (negative adjusted)
-        if (!hypotheticalEval.isMate || hypotheticalAdjusted < 0) {
+        // Convert long mates to centipawn
+        let hypIsMate = hypotheticalEval.isMate;
+        let hypScore = hypotheticalEval.score;
+        if (hypotheticalEval.isMate && Math.abs(hypotheticalEval.score) > LONG_MATE_THRESHOLD) {
+          hypIsMate = false;
+          hypScore = hypotheticalEval.score > 0 ? LONG_MATE_CP_VALUE : -LONG_MATE_CP_VALUE;
+        }
+        
+        const hypotheticalMultiplier = hypIsMate ? 1 : (currentTurn === 'w' ? -1 : 1);
+        const hypotheticalAdjusted = hypScore * hypotheticalMultiplier;
+        
+        // Check if adding this piece either removes mate or flips it to us mating (positive adjusted)
+        if (!hypIsMate || hypotheticalAdjusted > 0) {
           canBeSaved = true;
           console.log(`[STALL] ${botName} CAN be saved by ${pieceType}`);
           break;
@@ -571,16 +591,24 @@ export class BughouseGame {
       await engine.setPosition(fenWithHypothetical, []);
       const hypotheticalEval = await engine.getEvaluation(EVAL_DEPTH);
       
+      // Convert long mates to centipawn values
+      let hypIsMate = hypotheticalEval.isMate;
+      let hypScore = hypotheticalEval.score;
+      if (hypotheticalEval.isMate && Math.abs(hypotheticalEval.score) > LONG_MATE_THRESHOLD) {
+        hypIsMate = false;
+        hypScore = hypotheticalEval.score > 0 ? LONG_MATE_CP_VALUE : -LONG_MATE_CP_VALUE;
+      }
+      
       // Apply correct multiplier for hypothetical evaluation
       // Mate scores: no multiplier (positive = mating)
       // Centipawn scores: apply turn-based multiplier
-      const hypotheticalMultiplier = hypotheticalEval.isMate ? 1 : (currentTurn === 'w' ? -1 : 1);
-      const hypotheticalAdjusted = hypotheticalEval.score * hypotheticalMultiplier;
+      const hypotheticalMultiplier = hypIsMate ? 1 : (currentTurn === 'w' ? -1 : 1);
+      const hypotheticalAdjusted = hypScore * hypotheticalMultiplier;
       
-      console.log(`[STALL] ${botName} testing ${pieceType}: ${hypotheticalEval.isMate ? `mate ${hypotheticalAdjusted}` : `${hypotheticalAdjusted}cp`} (raw: ${hypotheticalEval.isMate ? `mate ${hypotheticalEval.score}` : `${hypotheticalEval.score}cp`})`);
+      console.log(`[STALL] ${botName} testing ${pieceType}: ${hypotheticalEval.isMate ? `mate ${hypotheticalEval.score}` : `${hypotheticalEval.score}cp`} (raw: ${hypotheticalEval.isMate ? `mate ${hypotheticalEval.score}` : `${hypotheticalEval.score}cp`})${hypotheticalEval.isMate && Math.abs(hypotheticalEval.score) > LONG_MATE_THRESHOLD ? ' [treated as +' + LONG_MATE_CP_VALUE + 'cp]' : ''}`);
       
-      // Scenario 1: Forces mate (current NOT mating, with piece IS mating with positive mate score)
-      const forcesMate = !currentEval.isMate && hypotheticalEval.isMate && hypotheticalAdjusted > 0;
+      // Scenario 1: Forces mate (current NOT mating, with piece IS mating with positive mate score <= 5)
+      const forcesMate = !currentIsMate && hypIsMate && hypotheticalAdjusted > 0;
       if (forcesMate) {
         console.log(`[STALL] ${botName} with ${pieceType} FORCES mate in ${Math.abs(hypotheticalAdjusted)}`);
         const stallChance = this.getStallProbability(pieceType, 'forces_mate');
@@ -589,10 +617,10 @@ export class BughouseGame {
       }
       
       // Scenario 2: Saves from mate (current getting mated with negative mate score, with piece either not mate or mating with positive mate score)
-      const savesFromMate = currentEval.isMate && adjustedScore < 0 && 
-                           (!hypotheticalEval.isMate || hypotheticalAdjusted > 0);
+      const savesFromMate = currentIsMate && adjustedScore < 0 && 
+                           (!hypIsMate || hypotheticalAdjusted > 0);
       if (savesFromMate) {
-        console.log(`[STALL] ${botName} with ${pieceType} SAVES from mate ${adjustedScore} -> ${hypotheticalEval.isMate ? `mate ${hypotheticalAdjusted}` : `${hypotheticalAdjusted}cp`}`);
+        console.log(`[STALL] ${botName} with ${pieceType} SAVES from mate ${adjustedScore} -> ${hypIsMate ? `mate ${hypotheticalAdjusted}` : `${hypotheticalAdjusted}cp`}`);
         const isMateInOne = adjustedScore === -1;
         const stallChance = isMateInOne ? 1.0 : this.getStallProbability(pieceType, 'saves_from_mate');
         const shouldStall = upOnTime && Math.random() < stallChance;
@@ -602,8 +630,8 @@ export class BughouseGame {
       // Scenario 3: Turns lost to winning (only for p, n, b)
       // Use adjusted scores for centipawn evaluation too
       if (['p', 'n', 'b'].includes(pieceType)) {
-        const currentCpAdjusted = currentEval.isMate ? 0 : adjustedScore;
-        const hypotheticalCpAdjusted = hypotheticalEval.isMate ? 0 : hypotheticalAdjusted;
+        const currentCpAdjusted = currentIsMate ? 0 : adjustedScore;
+        const hypotheticalCpAdjusted = hypIsMate ? 0 : hypotheticalAdjusted;
         
         const turnsLostToWinning = !currentEval.isMate && currentCpAdjusted > LOSING_THRESHOLD &&
                                    !hypotheticalEval.isMate && hypotheticalCpAdjusted < -WINNING_THRESHOLD;
@@ -923,21 +951,7 @@ export class BughouseGame {
             // Not stalling (down on time) - just play the move
             const move = await engine.getBestMove(this.thinkingTimeMs);
             const fulfilledBots = await this.executeMoveOnBoard(board, engine, move);
-            // Make any fulfilled bots move immediately
-            for (const bot of fulfilledBots) {
-              console.log(`[STALL] ${bot.botName} resuming immediately after receiving piece`);
-              // Set position with updated holdings before getting move
-              await bot.engine.setPosition(bot.board.getFen(), []);
-              // Directly make a move without re-evaluating stalling logic
-              const resumeMove = await bot.engine.getBestMove(this.thinkingTimeMs);
-              const nestedFulfilled = await this.executeMoveOnBoard(bot.board, bot.engine, resumeMove);
-              // Handle nested fulfillments
-              for (const nested of nestedFulfilled) {
-                console.log(`[STALL] ${nested.botName} resuming from nested fulfillment`);
-                const nestedMove = await nested.engine.getBestMove(this.thinkingTimeMs);
-                await this.executeMoveOnBoard(nested.board, nested.engine, nestedMove);
-              }
-            }
+            // Bots with fulfilled requests will move on their next turn (stalling state cleared)
             return;
           }
         }
@@ -1008,21 +1022,8 @@ export class BughouseGame {
       
       const fulfilledBots = await this.executeMoveOnBoard(board, engine, move);
       
-      // Make any fulfilled bots move immediately
-      for (const bot of fulfilledBots) {
-        console.log(`[STALL] ${bot.botName} resuming immediately after receiving piece`);
-        // Set position with updated holdings before getting move
-        await bot.engine.setPosition(bot.board.getFen(), []);
-        // Directly make a move without re-evaluating stalling logic
-        const resumeMove = await bot.engine.getBestMove(this.thinkingTimeMs);
-        const nestedFulfilled = await this.executeMoveOnBoard(bot.board, bot.engine, resumeMove);
-        // Handle nested fulfillments (resume could fulfill another bot)
-        for (const nested of nestedFulfilled) {
-          console.log(`[STALL] ${nested.botName} resuming from nested fulfillment`);
-          const nestedMove = await nested.engine.getBestMove(this.thinkingTimeMs);
-          await this.executeMoveOnBoard(nested.board, nested.engine, nestedMove);
-        }
-      }
+      // Bots with fulfilled requests will move on their next turn (stalling state cleared)
+      // No need to immediately resume - just let them move naturally
     } catch (error) {
       console.error('Engine move failed:', error);
     }
