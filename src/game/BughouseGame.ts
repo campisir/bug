@@ -259,8 +259,14 @@ export class BughouseGame {
     // Engine responds
     await this.makeEngineMove(this.playerBoard, this.engines.player);
 
-    // Check if any bot should abandon stalling due to time
-    this.checkTimeBasedStallAbandonment();
+    // Check if any bot should abandon stalling due to time and resume
+    const botsToResume = this.checkTimeBasedStallAbandonment();
+    for (const { botName, board, engine } of botsToResume) {
+      console.log(`[STALL] ${botName} resuming immediately after time abandonment`);
+      // Directly make a move without re-evaluating stalling logic
+      const move = await engine.getBestMove(this.thinkingTimeMs);
+      await this.executeMoveOnBoard(board, engine, move);
+    }
     
     // Update pools after engine response
     this.updatePiecePools();
@@ -686,12 +692,42 @@ export class BughouseGame {
   }
   
   /**
-   * Check if bots should stop stalling due to time disadvantage
+   * Check if a captured piece fulfills the stalling request
+   * Some pieces can substitute for others in bughouse tactics:
+   * - Pawn request: fulfilled by p, b, or q (all can deliver similar attacks)
+   * - Knight request: only fulfilled by n (unique movement)
+   * - Bishop request: fulfilled by b or q (diagonal control)
+   * - Rook request: fulfilled by r or q (file/rank control)
+   * - Queen request: only fulfilled by q (most powerful)
    */
-  private checkTimeBasedStallAbandonment(): void {
-    const times = this.getClockTimes?.();
-    if (!times) return;
+  private piecesFulfillRequest(requestedPiece: PieceType, capturedPiece: PieceType): boolean {
+    if (requestedPiece === capturedPiece) return true; // Exact match always works
     
+    switch (requestedPiece) {
+      case 'p':
+        return capturedPiece === 'b' || capturedPiece === 'q';
+      case 'n':
+        return false; // Only knight satisfies knight request
+      case 'b':
+        return capturedPiece === 'q'; // Queen can substitute for bishop
+      case 'r':
+        return capturedPiece === 'q'; // Queen can substitute for rook
+      case 'q':
+        return false; // Only queen satisfies queen request
+      default:
+        return false;
+    }
+  }
+  
+  /**
+   * Check if bots should stop stalling due to time disadvantage
+   * Returns array of bots that stopped stalling and need to move now
+   */
+  private checkTimeBasedStallAbandonment(): Array<{ botName: 'Bot 1' | 'Partner' | 'Bot 2', board: Board, engine: IChessEngine }> {
+    const times = this.getClockTimes?.();
+    if (!times) return [];
+    
+    const botsToResume: Array<{ botName: 'Bot 1' | 'Partner' | 'Bot 2', board: Board, engine: IChessEngine }> = [];
     const botKeys: Array<'bot1' | 'partner' | 'bot2'> = ['bot1', 'partner', 'bot2'];
     
     for (const botKey of botKeys) {
@@ -701,16 +737,44 @@ export class BughouseGame {
         
         // If bot is now down on time, stop stalling
         if (botTime <= diagonalTime) {
-          console.log(`[STALL] ${botName} now down on time - abandoning stall`);
+          console.log(`[STALL] ${botName} now down on time - abandoning stall and resuming play`);
           
           if (this.onChatMessage) {
             this.onChatMessage(botName, 'I go.');
           }
           
+          // Determine which board and engine this bot uses
+          let board: Board;
+          let engine: IChessEngine;
+          
+          if (botName === 'Bot 1') {
+            board = this.playerBoard;
+            engine = this.engines.player;
+          } else if (botName === 'Partner') {
+            board = this.partnerBoard;
+            engine = this.engines.partner1;
+          } else {
+            board = this.partnerBoard;
+            engine = this.engines.partner2;
+          }
+          
+          // Check if it's actually this bot's turn
+          const currentTurn = board.getCurrentTurn();
+          const botPlaysThisTurn = (botName === 'Bot 1' && currentTurn === 'b') ||
+                                   (botName === 'Partner' && currentTurn === 'b') ||
+                                   (botName === 'Bot 2' && currentTurn === 'w');
+          
           delete this.stallingState[botKey];
+          
+          // Only add to resume list if it's their turn
+          if (botPlaysThisTurn) {
+            botsToResume.push({ botName, board, engine });
+          }
         }
       }
     }
+    
+    return botsToResume;
   }
 
   /**
@@ -804,8 +868,16 @@ export class BughouseGame {
 
       // Identify which bot is making the move
       const botName = this.identifyBot(board, engine);
+      const botKey = this.botNameToKey(botName);
       
       console.log(`[MOVE] ${botName} thinking...`);
+      
+      // Check if bot is already in stalling state
+      if (this.stallingState[botKey]) {
+        console.log(`[STALL] ${botName} is ALREADY stalling for ${this.stallingState[botKey].piece} - NOT MOVING`);
+        // Stalling means NOT MOVING - just return and let the clock run
+        return;
+      }
       
       // Check if we should stall for a piece
       const stallResult = await this.shouldStallForPiece(board, engine, botName);
@@ -825,14 +897,21 @@ export class BughouseGame {
             this.onChatMessage(botName, 'I am mated');
           }
           if (shouldStall) {
+            console.log(`[STALL] ${botName} STARTS stalling for ${piece} - NOT MOVING`);
             this.stallingState[this.botNameToKey(botName)] = { piece, reason: scenario };
-            const move = await this.getStallMove(board, engine);
-            await this.executeMoveOnBoard(board, engine, move);
+            // Stalling means NOT MOVING - just return and let the clock run
             return;
           } else {
             // Not stalling (down on time) - just play the move
             const move = await engine.getBestMove(this.thinkingTimeMs);
-            await this.executeMoveOnBoard(board, engine, move);
+            const fulfilledBots = await this.executeMoveOnBoard(board, engine, move);
+            // Make any fulfilled bots move immediately
+            for (const bot of fulfilledBots) {
+              console.log(`[STALL] ${bot.botName} resuming immediately after receiving piece`);
+              // Directly make a move without re-evaluating stalling logic
+              const resumeMove = await bot.engine.getBestMove(this.thinkingTimeMs);
+              await this.executeMoveOnBoard(bot.board, bot.engine, resumeMove);
+            }
             return;
           }
         }
@@ -850,6 +929,7 @@ export class BughouseGame {
         // Determine if we should stall based on time and probability
         if (shouldStall) {
           // We're stalling - send scenario-specific message
+          console.log(`[STALL] ${botName} STARTS stalling for ${piece} - NOT MOVING`);
           this.stallingState[this.botNameToKey(botName)] = { piece, reason: scenario };
           
           // Reset down time message flag since we're back to stalling (up on time)
@@ -859,8 +939,7 @@ export class BughouseGame {
             this.onChatMessage(botName, requestMessage);
           }
           
-          const move = await this.getStallMove(board, engine);
-          await this.executeMoveOnBoard(board, engine, move);
+          // Stalling means NOT MOVING - just return and let the clock run
           return;
         } else {
           // Not stalling - send appropriate message
@@ -901,7 +980,15 @@ export class BughouseGame {
       // No stalling needed - get and play best move
       const move = await engine.getBestMove(this.thinkingTimeMs);
       
-      await this.executeMoveOnBoard(board, engine, move);
+      const fulfilledBots = await this.executeMoveOnBoard(board, engine, move);
+      
+      // Make any fulfilled bots move immediately
+      for (const bot of fulfilledBots) {
+        console.log(`[STALL] ${bot.botName} resuming immediately after receiving piece`);
+        // Directly make a move without re-evaluating stalling logic
+        const resumeMove = await bot.engine.getBestMove(this.thinkingTimeMs);
+        await this.executeMoveOnBoard(bot.board, bot.engine, resumeMove);
+      }
     } catch (error) {
       console.error('Engine move failed:', error);
     }
@@ -909,8 +996,10 @@ export class BughouseGame {
 
   /**
    * Execute a move on the board (extracted for reuse in stalling logic)
+   * Returns array of bots whose stalling was fulfilled and should move now
    */
-  private async executeMoveOnBoard(board: Board, engine: IChessEngine, move: any): Promise<void> {
+  private async executeMoveOnBoard(board: Board, engine: IChessEngine, move: any): Promise<Array<{ botName: 'Bot 1' | 'Partner' | 'Bot 2', board: Board, engine: IChessEngine }>> {
+    const fulfilledBots: Array<{ botName: 'Bot 1' | 'Partner' | 'Bot 2', board: Board, engine: IChessEngine }> = [];
     // If it's a drop move, remove the piece from the pool first
     if (move.drop) {
       const pieceType = move.drop.toLowerCase() as PieceType;
@@ -940,19 +1029,63 @@ export class BughouseGame {
       
       // Check if this capture fulfills a stalling bot's request
       const capturedType = captured.toLowerCase() as PieceType;
+      const capturingBotName = this.identifyBot(board, engine);
       
-      // Check all bots to see if they were stalling for this piece
+      // Check all bots to see if they were stalling for this piece (or equivalent)
       const botKeys: Array<'bot1' | 'partner' | 'bot2'> = ['bot1', 'partner', 'bot2'];
       for (const botKey of botKeys) {
-        if (this.stallingState[botKey]?.piece === capturedType) {
-          const botName = this.botKeyToName(botKey);
-          console.log(`[STALL] ${botName} received ${capturedType} - stall fulfilled!`);
+        const requestedPiece = this.stallingState[botKey]?.piece;
+        if (requestedPiece && this.piecesFulfillRequest(requestedPiece, capturedType)) {
+          const stallingBotName = this.botKeyToName(botKey);
           
-          if (this.onChatMessage) {
-            this.onChatMessage(botName, 'Thanks :)');
+          // Only thank if the piece was captured by someone on the OTHER board
+          // Bot 1 (player board) should thank Bot 2 or Partner (partner board)
+          // Bot 2 or Partner (partner board) should thank Bot 1 (player board)
+          const stallingOnPlayerBoard = stallingBotName === 'Bot 1';
+          const capturedOnPlayerBoard = board === this.playerBoard;
+          
+          if (stallingOnPlayerBoard !== capturedOnPlayerBoard) {
+            // Different boards - the capture helps!
+            const fulfillmentMsg = capturedType === requestedPiece 
+              ? `exact match ${capturedType}`
+              : `${capturedType} fulfills ${requestedPiece} request`;
+            console.log(`[STALL] ${stallingBotName} received ${fulfillmentMsg} from ${capturingBotName} - stall fulfilled!`);
+            
+            if (this.onChatMessage) {
+              this.onChatMessage(stallingBotName, 'Thanks :)');
+            }
+            
+            delete this.stallingState[botKey];
+            
+            // Determine which board and engine this bot uses
+            let botBoard: Board;
+            let botEngine: IChessEngine;
+            
+            if (stallingBotName === 'Bot 1') {
+              botBoard = this.playerBoard;
+              botEngine = this.engines.player;
+            } else if (stallingBotName === 'Partner') {
+              botBoard = this.partnerBoard;
+              botEngine = this.engines.partner1;
+            } else {
+              botBoard = this.partnerBoard;
+              botEngine = this.engines.partner2;
+            }
+            
+            // Check if it's actually this bot's turn
+            const currentTurn = botBoard.getCurrentTurn();
+            const botPlaysThisTurn = (stallingBotName === 'Bot 1' && currentTurn === 'b') ||
+                                     (stallingBotName === 'Partner' && currentTurn === 'b') ||
+                                     (stallingBotName === 'Bot 2' && currentTurn === 'w');
+            
+            // Only add to fulfilled list if it's their turn
+            if (botPlaysThisTurn) {
+              fulfilledBots.push({ botName: stallingBotName, board: botBoard, engine: botEngine });
+            }
+          } else {
+            // Same board - bot captured it themselves, don't thank
+            console.log(`[STALL] ${stallingBotName} captured ${capturedType} themselves on same board - ignoring`);
           }
-          
-          delete this.stallingState[botKey];
         }
       }
     }
@@ -976,6 +1109,8 @@ export class BughouseGame {
     if (this.onUpdate) {
       this.onUpdate();
     }
+    
+    return fulfilledBots;
   }
 
   private async playPartnerBoard(): Promise<void> {
@@ -1003,8 +1138,14 @@ export class BughouseGame {
         
         console.log(`[PARTNER] ========== Move ${moveCount + 1} ==========`);
         
-        // Check if any bot should abandon stalling due to time
-        this.checkTimeBasedStallAbandonment();
+        // Check if any bot should abandon stalling due to time and resume
+        const botsToResume = this.checkTimeBasedStallAbandonment();
+        for (const { botName, board, engine } of botsToResume) {
+          console.log(`[STALL] ${botName} resuming immediately after time abandonment`);
+          // Directly make a move without re-evaluating stalling logic
+          const move = await engine.getBestMove(this.thinkingTimeMs);
+          await this.executeMoveOnBoard(board, engine, move);
+        }
         
         await this.makeEngineMove(this.partnerBoard, engine);
         

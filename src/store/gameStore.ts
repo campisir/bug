@@ -68,10 +68,10 @@ export const useGameStore = create<GameState>((set, get) => ({
   partnerLastMove: null,
   chatMessages: [],
   
-  // Initialize clocks to 5 minutes (300000 ms)
+  // Initialize clocks: Bot 1 (playerBlack) at 10 minutes, others at 5 minutes
   playerWhiteTime: 300000,
-  playerBlackTime: 300000,
-  partnerWhiteTime: 300000,
+  playerBlackTime: 310000, // Bot 1 gets 10 minutes for testing
+  partnerWhiteTime: 310000,
   partnerBlackTime: 300000,
 
   initialize: async () => {
@@ -244,7 +244,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       playerFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
       partnerFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
       playerWhiteTime: 300000,
-      playerBlackTime: 300000,
+      playerBlackTime: 600000, // Bot 1 gets 10 minutes for testing
       partnerWhiteTime: 300000,
       partnerBlackTime: 300000,
     });
