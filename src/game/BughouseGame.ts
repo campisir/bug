@@ -263,6 +263,8 @@ export class BughouseGame {
     const botsToResume = this.checkTimeBasedStallAbandonment();
     for (const { botName, board, engine } of botsToResume) {
       console.log(`[STALL] ${botName} resuming immediately after time abandonment`);
+      // Set position before getting move
+      await engine.setPosition(board.getFen(), []);
       // Directly make a move without re-evaluating stalling logic
       const move = await engine.getBestMove(this.thinkingTimeMs);
       await this.executeMoveOnBoard(board, engine, move);
@@ -505,26 +507,31 @@ export class BughouseGame {
     await engine.setPosition(fenWithCurrentHoldings, []);
     const currentEval = await engine.getEvaluation(EVAL_DEPTH);
     
-    // Check which board to determine score convention
     const isPlayerBoard = board === this.playerBoard;
     const currentTurn = board.getCurrentTurn();
     
     console.log(`[STALL] ${botName} (board: ${isPlayerBoard ? 'player' : 'partner'}, turn: ${currentTurn}) evaluation: ${currentEval.isMate ? `mate ${currentEval.score}` : `${currentEval.score}cp`}`);
     
-    // Score interpretation varies by board:
-    // Player board (Bot 1): standard UCI (mate -x = mating, mate +x = being mated)
-    // Partner board (Bot 2/Partner): inverted (mate +x = being mated, mate -x = mating)
-    const scoreMultiplier = isPlayerBoard ? -1 : 1;
+    // Score interpretation differs for mate vs centipawn:
+    // MATE SCORES: mate +X = side to move mates in X, mate -X = side to move gets mated in X
+    //   - Positive mate = good for us (we're mating)
+    //   - Negative mate = bad for us (getting mated)
+    //   - NO multiplier needed for mate scores
+    // CENTIPAWN SCORES: UCI always from WHITE's perspective
+    //   - Positive = good for WHITE, Negative = good for BLACK
+    //   - If WHITE to move: flip (multiply by -1) so winning is negative
+    //   - If BLACK to move: keep (multiply by 1) so winning is negative
+    const scoreMultiplier = currentEval.isMate ? 1 : (currentTurn === 'w' ? -1 : 1);
     const adjustedScore = currentEval.score * scoreMultiplier;
     
-    // If already delivering mate (adjusted NEGATIVE score), don't stall
-    if (currentEval.isMate && adjustedScore < 0) {
+    // If already delivering mate (positive mate score), don't stall
+    if (currentEval.isMate && adjustedScore > 0) {
       console.log(`[STALL] ${botName} is mating in ${Math.abs(adjustedScore)}, no stalling needed`);
       return null;
     }
     
-    // Check for mate-in-1 with no escape (adjusted score is +1, meaning getting mated in 1)
-    if (currentEval.isMate && adjustedScore === 1) {
+    // Check for mate-in-1 with no escape (negative mate score means getting mated)
+    if (currentEval.isMate && adjustedScore === -1) {
       console.log(`[STALL] ${botName} is getting mated in 1, checking if any piece saves...`);
       // Test if any piece saves us
       const piecesToTry: PieceType[] = ['p', 'n', 'b', 'r', 'q'];
@@ -563,10 +570,17 @@ export class BughouseGame {
       
       await engine.setPosition(fenWithHypothetical, []);
       const hypotheticalEval = await engine.getEvaluation(EVAL_DEPTH);
-      const hypotheticalAdjusted = hypotheticalEval.score * scoreMultiplier;
       
-      // Scenario 1: Forces mate (current NOT mating, with piece IS mating with adjusted NEGATIVE score)
-      const forcesMate = !currentEval.isMate && hypotheticalEval.isMate && hypotheticalAdjusted < 0;
+      // Apply correct multiplier for hypothetical evaluation
+      // Mate scores: no multiplier (positive = mating)
+      // Centipawn scores: apply turn-based multiplier
+      const hypotheticalMultiplier = hypotheticalEval.isMate ? 1 : (currentTurn === 'w' ? -1 : 1);
+      const hypotheticalAdjusted = hypotheticalEval.score * hypotheticalMultiplier;
+      
+      console.log(`[STALL] ${botName} testing ${pieceType}: ${hypotheticalEval.isMate ? `mate ${hypotheticalAdjusted}` : `${hypotheticalAdjusted}cp`} (raw: ${hypotheticalEval.isMate ? `mate ${hypotheticalEval.score}` : `${hypotheticalEval.score}cp`})`);
+      
+      // Scenario 1: Forces mate (current NOT mating, with piece IS mating with positive mate score)
+      const forcesMate = !currentEval.isMate && hypotheticalEval.isMate && hypotheticalAdjusted > 0;
       if (forcesMate) {
         console.log(`[STALL] ${botName} with ${pieceType} FORCES mate in ${Math.abs(hypotheticalAdjusted)}`);
         const stallChance = this.getStallProbability(pieceType, 'forces_mate');
@@ -574,15 +588,15 @@ export class BughouseGame {
         return { piece: pieceType, scenario: 'forces_mate', shouldStall, mateDistance: Math.abs(hypotheticalAdjusted) };
       }
       
-      // Scenario 2: Saves from mate (current getting mated with adjusted POSITIVE score, with piece either not mate or mating with adjusted NEGATIVE score)
-      const savesFromMate = currentEval.isMate && adjustedScore > 0 && 
-                           (!hypotheticalEval.isMate || hypotheticalAdjusted < 0);
+      // Scenario 2: Saves from mate (current getting mated with negative mate score, with piece either not mate or mating with positive mate score)
+      const savesFromMate = currentEval.isMate && adjustedScore < 0 && 
+                           (!hypotheticalEval.isMate || hypotheticalAdjusted > 0);
       if (savesFromMate) {
-        console.log(`[STALL] ${botName} with ${pieceType} SAVES from mate ${adjustedScore} -> ${hypotheticalEval.isMate ? `mate ${hypotheticalAdjusted}` : `${hypotheticalEval.score}cp`}`);
-        const isMateInOne = adjustedScore === 1;
+        console.log(`[STALL] ${botName} with ${pieceType} SAVES from mate ${adjustedScore} -> ${hypotheticalEval.isMate ? `mate ${hypotheticalAdjusted}` : `${hypotheticalAdjusted}cp`}`);
+        const isMateInOne = adjustedScore === -1;
         const stallChance = isMateInOne ? 1.0 : this.getStallProbability(pieceType, 'saves_from_mate');
         const shouldStall = upOnTime && Math.random() < stallChance;
-        return { piece: pieceType, scenario: isMateInOne ? 'saves_mate_in_1' : 'saves_from_mate', shouldStall, mateDistance: adjustedScore };
+        return { piece: pieceType, scenario: isMateInOne ? 'saves_mate_in_1' : 'saves_from_mate', shouldStall, mateDistance: Math.abs(adjustedScore) };
       }
       
       // Scenario 3: Turns lost to winning (only for p, n, b)
@@ -601,6 +615,8 @@ export class BughouseGame {
         }
       }
     }
+    
+    console.log(`[STALL] ${botName} found no stalling scenario`);
     
     return null;
   }
@@ -663,12 +679,12 @@ export class BughouseGame {
       return 'Bot 1';
     } else {
       // Partner board - determine which bot based on engine reference
+      // partner1 is used on even moves (WHITE), so partner1 = Bot 2 (WHITE)
+      // partner2 is used on odd moves (BLACK), so partner2 = Partner (BLACK)
       if (engine === this.engines.partner1) {
-        // partner1 plays black (Partner)
-        return 'Partner';
-      } else {
-        // partner2 plays white (Bot 2)
         return 'Bot 2';
+      } else {
+        return 'Partner';
       }
     }
   }
@@ -750,10 +766,12 @@ export class BughouseGame {
           if (botName === 'Bot 1') {
             board = this.playerBoard;
             engine = this.engines.player;
-          } else if (botName === 'Partner') {
+          } else if (botName === 'Bot 2') {
+            // Bot 2 plays WHITE on partner board (partner1 engine)
             board = this.partnerBoard;
             engine = this.engines.partner1;
           } else {
+            // Partner plays BLACK on partner board (partner2 engine)
             board = this.partnerBoard;
             engine = this.engines.partner2;
           }
@@ -908,9 +926,17 @@ export class BughouseGame {
             // Make any fulfilled bots move immediately
             for (const bot of fulfilledBots) {
               console.log(`[STALL] ${bot.botName} resuming immediately after receiving piece`);
+              // Set position with updated holdings before getting move
+              await bot.engine.setPosition(bot.board.getFen(), []);
               // Directly make a move without re-evaluating stalling logic
               const resumeMove = await bot.engine.getBestMove(this.thinkingTimeMs);
-              await this.executeMoveOnBoard(bot.board, bot.engine, resumeMove);
+              const nestedFulfilled = await this.executeMoveOnBoard(bot.board, bot.engine, resumeMove);
+              // Handle nested fulfillments
+              for (const nested of nestedFulfilled) {
+                console.log(`[STALL] ${nested.botName} resuming from nested fulfillment`);
+                const nestedMove = await nested.engine.getBestMove(this.thinkingTimeMs);
+                await this.executeMoveOnBoard(nested.board, nested.engine, nestedMove);
+              }
             }
             return;
           }
@@ -985,9 +1011,17 @@ export class BughouseGame {
       // Make any fulfilled bots move immediately
       for (const bot of fulfilledBots) {
         console.log(`[STALL] ${bot.botName} resuming immediately after receiving piece`);
+        // Set position with updated holdings before getting move
+        await bot.engine.setPosition(bot.board.getFen(), []);
         // Directly make a move without re-evaluating stalling logic
         const resumeMove = await bot.engine.getBestMove(this.thinkingTimeMs);
-        await this.executeMoveOnBoard(bot.board, bot.engine, resumeMove);
+        const nestedFulfilled = await this.executeMoveOnBoard(bot.board, bot.engine, resumeMove);
+        // Handle nested fulfillments (resume could fulfill another bot)
+        for (const nested of nestedFulfilled) {
+          console.log(`[STALL] ${nested.botName} resuming from nested fulfillment`);
+          const nestedMove = await nested.engine.getBestMove(this.thinkingTimeMs);
+          await this.executeMoveOnBoard(nested.board, nested.engine, nestedMove);
+        }
       }
     } catch (error) {
       console.error('Engine move failed:', error);
@@ -1064,10 +1098,12 @@ export class BughouseGame {
             if (stallingBotName === 'Bot 1') {
               botBoard = this.playerBoard;
               botEngine = this.engines.player;
-            } else if (stallingBotName === 'Partner') {
+            } else if (stallingBotName === 'Bot 2') {
+              // Bot 2 plays WHITE on partner board (partner1 engine)
               botBoard = this.partnerBoard;
               botEngine = this.engines.partner1;
             } else {
+              // Partner plays BLACK on partner board (partner2 engine)
               botBoard = this.partnerBoard;
               botEngine = this.engines.partner2;
             }
@@ -1142,6 +1178,8 @@ export class BughouseGame {
         const botsToResume = this.checkTimeBasedStallAbandonment();
         for (const { botName, board, engine } of botsToResume) {
           console.log(`[STALL] ${botName} resuming immediately after time abandonment`);
+          // Set position before getting move
+          await engine.setPosition(board.getFen(), []);
           // Directly make a move without re-evaluating stalling logic
           const move = await engine.getBestMove(this.thinkingTimeMs);
           await this.executeMoveOnBoard(board, engine, move);
