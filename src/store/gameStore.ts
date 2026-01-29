@@ -39,6 +39,8 @@ interface GameState {
   selectPiece: (pieceType: PieceType | null) => void;
   pausePartnerBoard: () => void;
   resumePartnerBoard: () => void;
+  sendGoCommand: () => void;
+  sendSitCommand: () => void;
   updateBoards: () => void;
   reset: () => void;
   tickClock: () => void;
@@ -159,6 +161,20 @@ export const useGameStore = create<GameState>((set, get) => ({
     const { game } = get();
     if (game) {
       game.resume();
+    }
+  },
+
+  sendGoCommand: () => {
+    const { game } = get();
+    if (game) {
+      game.sendGoCommand();
+    }
+  },
+
+  sendSitCommand: () => {
+    const { game } = get();
+    if (game) {
+      game.sendSitCommand();
     }
   },
 

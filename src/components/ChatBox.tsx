@@ -3,16 +3,18 @@ import '../styles/ChatBox.css';
 
 export interface ChatMessage {
   id: number;
-  sender: 'Partner' | 'Bot 1' | 'Bot 2' | 'System';
+  sender: 'Partner' | 'Bot 1' | 'Bot 2' | 'System' | 'You';
   message: string;
   timestamp: number;
 }
 
 interface ChatBoxProps {
   messages: ChatMessage[];
+  onSendGo?: () => void;
+  onSendSit?: () => void;
 }
 
-export function ChatBox({ messages }: ChatBoxProps) {
+export function ChatBox({ messages, onSendGo, onSendSit }: ChatBoxProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom when new messages arrive
@@ -36,6 +38,10 @@ export function ChatBox({ messages }: ChatBoxProps) {
           </div>
         ))}
         <div ref={messagesEndRef} />
+      </div>
+      <div className="chat-controls">
+        <button onClick={onSendGo} className="chat-button go-button">Go</button>
+        <button onClick={onSendSit} className="chat-button sit-button">Sit</button>
       </div>
     </div>
   );

@@ -39,8 +39,8 @@ export function GameContainer() {
   const makeMove = useGameStore((state) => state.makeMove);
   const dropPiece = useGameStore((state) => state.dropPiece);
   const selectPiece = useGameStore((state) => state.selectPiece);
-  const pausePartnerBoard = useGameStore((state) => state.pausePartnerBoard);
-  const resumePartnerBoard = useGameStore((state) => state.resumePartnerBoard);
+  const sendGoCommand = useGameStore((state) => state.sendGoCommand);
+  const sendSitCommand = useGameStore((state) => state.sendSitCommand);
   const tickClock = useGameStore((state) => state.tickClock);
 
   const [showGameOver, setShowGameOver] = useState(true);
@@ -184,8 +184,6 @@ export function GameContainer() {
           <div className="board-header">
             <h2>Partner Board</h2>
             <div style={{ display: 'flex', gap: '10px', alignItems: 'center', justifyContent: 'center' }}>
-              <button onClick={pausePartnerBoard} className="control-button">Pause</button>
-              <button onClick={resumePartnerBoard} className="control-button">Resume</button>
               <span className="board-info">Bots Playing</span>
             </div>
           </div>
@@ -229,7 +227,11 @@ export function GameContainer() {
 
         {/* Chat Box Section */}
         <div className="chat-section">
-          <ChatBox messages={chatMessages} />
+          <ChatBox 
+            messages={chatMessages} 
+            onSendGo={sendGoCommand}
+            onSendSit={sendSitCommand}
+          />
         </div>
       </div>
 

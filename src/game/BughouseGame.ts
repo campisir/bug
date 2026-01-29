@@ -33,7 +33,7 @@ export interface BughouseGameConfig {
   partnerEngine1: IChessEngine; // First bot on partner board
   partnerEngine2: IChessEngine; // Second bot on partner board
   thinkingTimeMs?: number; // Time for engine to think (default: 1000ms)
-  onChatMessage?: (sender: 'Partner' | 'Bot 1' | 'Bot 2' | 'System', message: string) => void;
+  onChatMessage?: (sender: 'Partner' | 'Bot 1' | 'Bot 2' | 'System' | 'You', message: string) => void;
   getClockTimes?: () => { playerWhite: number; playerBlack: number; partnerWhite: number; partnerBlack: number };
 }
 
@@ -48,7 +48,7 @@ export class BughouseGame {
   private status: GameStatus = GameStatus.NOT_STARTED;
   private thinkingTimeMs: number;
   private onUpdate?: () => void;
-  private onChatMessage?: (sender: 'Partner' | 'Bot 1' | 'Bot 2' | 'System', message: string) => void;
+  private onChatMessage?: (sender: 'Partner' | 'Bot 1' | 'Bot 2' | 'System' | 'You', message: string) => void;
   private getClockTimes?: () => { playerWhite: number; playerBlack: number; partnerWhite: number; partnerBlack: number };
   private isPartnerBoardPlaying: boolean = false;
   private isPaused: boolean = false;
@@ -57,9 +57,9 @@ export class BughouseGame {
   
   // Stalling state tracking
   private stallingState: {
-    bot1?: { piece: PieceType; reason: string }; // Bot 1 (player's opponent)
-    partner?: { piece: PieceType; reason: string }; // Partner bot
-    bot2?: { piece: PieceType; reason: string }; // Bot 2 (partner's opponent)
+    bot1?: { piece: PieceType; reason: string; playerInduced?: boolean }; // Bot 1 (player's opponent)
+    partner?: { piece: PieceType; reason: string; playerInduced?: boolean }; // Partner bot
+    bot2?: { piece: PieceType; reason: string; playerInduced?: boolean }; // Bot 2 (partner's opponent)
   } = {};
   
   // Track if bot has already sent "down time" message
@@ -68,6 +68,9 @@ export class BughouseGame {
     partner: boolean;
     bot2: boolean;
   } = { bot1: false, partner: false, bot2: false };
+  
+  // Track when partner was forced to go (prevent immediate re-stall)
+  private partnerForcedToGo: boolean = false;
 
   constructor(config: BughouseGameConfig) {
     // Player board: player vs engine
@@ -473,6 +476,66 @@ export class BughouseGame {
   }
 
   /**
+   * Player sends "Go" command - forces Partner to exit stalling
+   */
+  sendGoCommand(): void {
+    // Send player's message first
+    if (this.onChatMessage) {
+      this.onChatMessage('You', 'Go');
+    }
+    
+    // Random delay 1-2 seconds for realistic response
+    const delay = 1000 + Math.random() * 1000;
+    setTimeout(() => {
+      if (this.stallingState.partner) {
+        // Partner is stalling - force exit
+        if (this.onChatMessage) {
+          this.onChatMessage('Partner', 'I go.');
+        }
+        delete this.stallingState.partner;
+        this.partnerForcedToGo = true; // Prevent immediate re-stall
+      } else {
+        // Partner is not stalling
+        if (this.onChatMessage) {
+          this.onChatMessage('Partner', '?');
+        }
+      }
+    }, delay);
+  }
+
+  /**
+   * Player sends "Sit" command - forces Partner to enter stalling
+   */
+  sendSitCommand(): void {
+    // Send player's message first
+    if (this.onChatMessage) {
+      this.onChatMessage('You', 'Sit');
+    }
+    
+    // Random delay 1-2 seconds for realistic response
+    const delay = 1000 + Math.random() * 1000;
+    setTimeout(() => {
+      if (this.stallingState.partner) {
+        // Partner is already stalling
+        if (this.onChatMessage) {
+          this.onChatMessage('Partner', 'I am.');
+        }
+      } else {
+        // Partner is not stalling - force stall
+        if (this.onChatMessage) {
+          this.onChatMessage('Partner', 'I sit.');
+        }
+        // Enter player-induced stall (use dummy piece)
+        this.stallingState.partner = {
+          piece: 'q',
+          reason: 'player_command',
+          playerInduced: true
+        };
+      }
+    }, delay);
+  }
+
+  /**
    * Check if adding a specific piece type would critically improve the position
    * Returns evaluation result with piece, scenario, and whether to stall
    */
@@ -776,6 +839,11 @@ export class BughouseGame {
     
     for (const botKey of botKeys) {
       if (this.stallingState[botKey]) {
+        // Skip player-induced stalls - they can only be exited by player command
+        if (this.stallingState[botKey]!.playerInduced) {
+          continue;
+        }
+        
         const botName = this.botKeyToName(botKey);
         const { botTime, diagonalTime } = this.getBotAndDiagonalTimes(botName, times);
         
@@ -920,8 +988,17 @@ export class BughouseGame {
       
       // Check if bot is already in stalling state
       if (this.stallingState[botKey]) {
-        console.log(`[STALL] ${botName} is ALREADY stalling for ${this.stallingState[botKey].piece} - NOT MOVING`);
+        console.log(`[STALL] ${botName} is ALREADY stalling for ${this.stallingState[botKey]!.piece} - NOT MOVING`);
         // Stalling means NOT MOVING - just return and let the clock run
+        return;
+      }
+      
+      // Check if this is Partner and was just forced to go - prevent immediate re-stall
+      if (botName === 'Partner' && this.partnerForcedToGo) {
+        console.log(`[STALL] Partner was forced to go - skipping stall check this turn`);
+        this.partnerForcedToGo = false; // Reset flag after one move
+        const move = await engine.getBestMove(this.thinkingTimeMs);
+        await this.executeMoveOnBoard(board, engine, move);
         return;
       }
       
