@@ -37,7 +37,16 @@ export interface BughouseGameConfig {
   getClockTimes?: () => { playerWhite: number; playerBlack: number; partnerWhite: number; partnerBlack: number };
 }
 
+// Partner request approach modes
+type PartnerRequestApproach = 'royal-piece' | 'high-value' | 'proximity';
+
 export class BughouseGame {
+  // TEST CONFIGURATION: Switch between approaches
+  // 'royal-piece' = Ghost position with extinctionPseudoRoyal
+  // 'high-value' = Ghost position with customPieceValue = 99999
+  // 'proximity' = Multi-PV with Manhattan distance scoring
+  private partnerRequestApproach: PartnerRequestApproach = 'royal-piece';
+  
   private playerBoard: Board;
   private partnerBoard: Board;
   private engines: {
@@ -60,6 +69,13 @@ export class BughouseGame {
     bot1?: { piece: PieceType; reason: string; playerInduced?: boolean }; // Bot 1 (player's opponent)
     partner?: { piece: PieceType; reason: string; playerInduced?: boolean }; // Partner bot
     bot2?: { piece: PieceType; reason: string; playerInduced?: boolean }; // Bot 2 (partner's opponent)
+  } = {};
+  
+  // Track partner requests - who needs to capture what piece and why
+  private partnerRequests: {
+    bot1?: { piece: PieceType; reason: string; requestedBy: 'partner' | 'bot2' }; // Bot 1 should capture this
+    partner?: { piece: PieceType; reason: string; requestedBy: 'bot1' | 'player' }; // Partner should capture this
+    bot2?: { piece: PieceType; reason: string; requestedBy: 'bot1' | 'partner' }; // Bot 2 should capture this
   } = {};
   
   // Track if bot has already sent "down time" message
@@ -465,6 +481,241 @@ export class BughouseGame {
   }
 
   /**
+   * Get the partner bot name for a requesting bot
+   * Bughouse teams:
+   * - Team 1: Player + Partner
+   * - Team 2: Bot 1 + Bot 2
+   */
+  private getPartnerBotName(botName: 'Partner' | 'Bot 1' | 'Bot 2'): 'Partner' | 'Bot 1' | 'Bot 2' | null {
+    // Partner's partner is Player (but Player doesn't make automated requests)
+    // So Partner will only receive requests from Player manually, not from stalling logic
+    if (botName === 'Partner') return null; // Player can't receive requests (not a bot)
+    
+    // Bot 1's partner is Bot 2 (they're teammates)
+    if (botName === 'Bot 1') return 'Bot 2';
+    
+    // Bot 2's partner is Bot 1 (they're teammates)
+    if (botName === 'Bot 2') return 'Bot 1';
+    
+    return null;
+  }
+
+  /**
+   * Set a partner request - partner should try to capture this piece
+   */
+  private setPartnerRequest(botName: 'Partner' | 'Bot 1' | 'Bot 2', piece: PieceType, reason: string): void {
+    const partnerName = this.getPartnerBotName(botName);
+    if (!partnerName) return;
+
+    const partnerKey = this.botNameToKey(partnerName) as 'bot1' | 'partner' | 'bot2';
+    const requesterKey = botName === 'Bot 1' ? 'bot1' : botName === 'Bot 2' ? 'bot2' : 'partner';
+    
+    // Type-safe assignment based on which partner bot it is
+    if (partnerKey === 'bot1') {
+      this.partnerRequests.bot1 = {
+        piece,
+        reason,
+        requestedBy: requesterKey as 'partner' | 'bot2'
+      };
+    } else if (partnerKey === 'partner') {
+      this.partnerRequests.partner = {
+        piece,
+        reason,
+        requestedBy: requesterKey as 'bot1' | 'player'
+      };
+    } else if (partnerKey === 'bot2') {
+      this.partnerRequests.bot2 = {
+        piece,
+        reason,
+        requestedBy: requesterKey as 'bot1' | 'partner'
+      };
+    }
+
+    // Send "I will try." response after 1-2 second delay
+    const delay = 1000 + Math.random() * 1000;
+    setTimeout(() => {
+      if (this.onChatMessage && this.partnerRequests[partnerKey]) {
+        this.onChatMessage(partnerName, 'I will try.');
+      }
+    }, delay);
+  }
+
+  /**
+   * Clear a partner request
+   */
+  private clearPartnerRequest(botName: 'Partner' | 'Bot 1' | 'Bot 2'): void {
+    const botKey = this.botNameToKey(botName);
+    delete this.partnerRequests[botKey];
+  }
+
+  /**
+   * Get best move considering partner requests
+   * Uses a three-step approach:
+   * Step 0: Check if we can checkmate - always take the win
+   * Step 1: Check if requested piece is immediately capturable - evaluate sacrifice rules
+   * Step 2: Use ghost position with royal piece to guide move selection
+   */
+  private async getBestMoveWithPartnerRequest(
+    board: Board, 
+    engine: IChessEngine, 
+    botName: 'Partner' | 'Bot 1' | 'Bot 2'
+  ): Promise<any> {
+    const botKey = this.botNameToKey(botName);
+    const request = this.partnerRequests[botKey];
+
+    // No request - get normal best move
+    if (!request) {
+      return await engine.getBestMove(this.thinkingTimeMs);
+    }
+
+    console.log(`[PARTNER REQUEST] ${botName} attempting to capture ${request.piece} (reason: ${request.reason})`);
+
+    // Build current position FEN with holdings
+    const baseFen = board.getFen();
+    const fenParts = baseFen.split(' ');
+    const whitePool = board.getWhitePiecePool();
+    const blackPool = board.getBlackPiecePool();
+    const whiteHoldings = this.buildHoldingsString(whitePool, true);
+    const blackHoldings = this.buildHoldingsString(blackPool, false);
+    const holdings = whiteHoldings + blackHoldings;
+    const fenWithHoldings = holdings 
+      ? `${fenParts[0]}[${holdings}] ${fenParts.slice(1).join(' ')}`
+      : baseFen;
+
+    await engine.setPosition(fenWithHoldings, []);
+
+    // STEP 0: Check if we can deliver checkmate - always prioritize winning
+    const currentEval = await engine.getEvaluation(12);
+    if (currentEval.isMate && currentEval.score > 0 && Math.abs(currentEval.score) <= 5) {
+      console.log(`[PARTNER REQUEST] ${botName} can checkmate in ${currentEval.score} - ignoring request`);
+      return await engine.getBestMove(this.thinkingTimeMs);
+    }
+
+    // STEP 1: Check if requested piece is immediately capturable
+    const normalMove = await engine.getBestMove(this.thinkingTimeMs);
+    
+    // Check if normal best move captures the requested piece
+    if (normalMove && normalMove.to) {
+      const targetPiece = this.getPieceAt(board, normalMove.to);
+      if (targetPiece) {
+        const capturedType = targetPiece.toLowerCase() as PieceType;
+        if (this.piecesFulfillRequest(request.piece, capturedType)) {
+          console.log(`[PARTNER REQUEST] ${botName} best move already captures ${capturedType}!`);
+          return normalMove;
+        }
+      }
+    }
+
+    // Look for other moves that capture the requested piece
+    const capturingMove = await this.findImmediateCapture(board, engine, request.piece, request.reason, botName);
+    if (capturingMove) {
+      console.log(`[PARTNER REQUEST] ${botName} found immediate capture of ${request.piece}`);
+      return capturingMove;
+    }
+
+    // STEP 2: Use configured approach to find move toward requested piece
+    console.log(`[PARTNER REQUEST] ${botName} no immediate capture - using approach: ${this.partnerRequestApproach}`);
+    
+    let specialMove: any = null;
+    
+    try {
+      switch (this.partnerRequestApproach) {
+        case 'royal-piece':
+          specialMove = await this.getGhostPositionMove(
+            board, engine, fenWithHoldings, request.piece, botName
+          );
+          break;
+          
+        case 'high-value':
+          specialMove = await this.getHighValuePieceMove(
+            board, engine, fenWithHoldings, request.piece, botName
+          );
+          break;
+          
+        case 'proximity':
+          specialMove = await this.getProximityMove(
+            board, engine, fenWithHoldings, request.piece, botName
+          );
+          break;
+      }
+      
+      if (specialMove && specialMove.from && specialMove.to) {
+        console.log(`[PARTNER REQUEST] ${botName} playing ${this.partnerRequestApproach} move: ${specialMove.from}${specialMove.to}`);
+        return specialMove;
+      }
+    } catch (error) {
+      console.error(`[PARTNER REQUEST] ${this.partnerRequestApproach} approach failed:`, error);
+    }
+    
+    // Fallback to normal move
+    console.log(`[PARTNER REQUEST] ${botName} no forcing line to ${request.piece} - playing normal move`);
+    return normalMove;
+  }
+
+  /**
+   * Find a move that immediately captures the requested piece type
+   * Applies sacrifice rules based on request reason
+   */
+  private async findImmediateCapture(
+    board: Board,
+    _engine: IChessEngine,
+    requestedPiece: PieceType,
+    _reason: string,
+    _botName: 'Partner' | 'Bot 1' | 'Bot 2'
+  ): Promise<any | null> {
+    const fen = board.getFen();
+    const fenParts = fen.split(' ');
+    const position = fenParts[0];
+    
+    // Find all squares with the requested piece type (or equivalent)
+    const targetSquares: string[] = [];
+    const ranks = position.split('/');
+    
+    for (let rank = 0; rank < 8; rank++) {
+      const rankStr = ranks[rank];
+      let file = 0;
+      
+      for (const char of rankStr) {
+        if (char >= '1' && char <= '8') {
+          file += parseInt(char);
+        } else {
+          const pieceType = char.toLowerCase() as PieceType;
+          const pieceColor = char === char.toUpperCase() ? 'w' : 'b';
+          const currentTurn = board.getCurrentTurn();
+          
+          // Only look at opponent's pieces
+          if (pieceColor !== currentTurn && this.piecesFulfillRequest(requestedPiece, pieceType)) {
+            const square = String.fromCharCode('a'.charCodeAt(0) + file) + (8 - rank);
+            targetSquares.push(square);
+          }
+          file++;
+        }
+      }
+    }
+
+    if (targetSquares.length === 0) {
+      console.log(`[PARTNER REQUEST] No ${requestedPiece} pieces found on board`);
+      return null;
+    }
+
+    console.log(`[PARTNER REQUEST] Found ${requestedPiece} at: ${targetSquares.join(', ')}`);
+
+    // Get current evaluation for sacrifice rule comparisons (for future use)
+    // const currentEval = await engine.getEvaluation(12);
+    // const currentTurn = board.getCurrentTurn();
+    // const times = this.getClockTimes?.();
+
+    // Test each target square - get best move and check if it captures the piece
+    // This is a simplified approach - ideally we'd enumerate all legal moves
+    // For now, ask engine for best move after setting the target as very valuable
+    
+    // Just return null for now - proper implementation needs move enumeration
+    // which requires either parsing engine's legal moves or using a move generator
+    console.log(`[PARTNER REQUEST] Immediate capture check not fully implemented yet`);
+    return null;
+  }
+
+  /**
    * Shutdown all engines and cleanup
    */
   async shutdown(): Promise<void> {
@@ -493,6 +744,7 @@ export class BughouseGame {
           this.onChatMessage('Partner', 'I go.');
         }
         delete this.stallingState.partner;
+        this.clearPartnerRequest('Partner'); // Clear partner's request to their partner
         this.partnerForcedToGo = true; // Prevent immediate re-stall
       } else {
         // Partner is not stalling
@@ -752,14 +1004,15 @@ export class BughouseGame {
   /**
    * Find a "stalling" move - a safe waiting move that doesn't commit pieces
    * Used when waiting for partner to deliver a requested piece
+   * Currently unused - reserved for future implementation
    */
-  private async getStallMove(board: Board, engine: IChessEngine): Promise<any> {
-    // For now, just get the best move but could filter for quiet moves
-    // TODO: Filter for moves that don't trade pieces, don't advance position much
-    const baseFen = board.getFen();
-    await engine.setPosition(baseFen, []);
-    return await engine.getBestMove(this.thinkingTimeMs);
-  }
+  // private async getStallMove(board: Board, engine: IChessEngine): Promise<any> {
+  //   // For now, just get the best move but could filter for quiet moves
+  //   // TODO: Filter for moves that don't trade pieces, don't advance position much
+  //   const baseFen = board.getFen();
+  //   await engine.setPosition(baseFen, []);
+  //   return await engine.getBestMove(this.thinkingTimeMs);
+  // }
   
   /**
    * Identify which bot is making a move
@@ -880,6 +1133,12 @@ export class BughouseGame {
           
           delete this.stallingState[botKey];
           
+          // Clear the partner's request (the one this bot made to their partner)
+          const partnerName = this.getPartnerBotName(botName);
+          if (partnerName) {
+            this.clearPartnerRequest(partnerName);
+          }
+          
           // Only add to resume list if it's their turn
           if (botPlaysThisTurn) {
             botsToResume.push({ botName, board, engine });
@@ -889,6 +1148,257 @@ export class BughouseGame {
     }
     
     return botsToResume;
+  }
+
+  /**
+   * Get best move from ghost position where requested piece is royal
+   * This makes the engine search for forcing lines to capture the piece
+   */
+  private async getGhostPositionMove(
+    _board: Board,
+    engine: IChessEngine,
+    currentFen: string,
+    requestedPiece: PieceType,
+    botName: 'Partner' | 'Bot 1' | 'Bot 2'
+  ): Promise<any | null> {
+    console.log(`[GHOST] ${botName} creating ghost position with royal ${requestedPiece}`);
+    
+    // Map piece type to character for variant config
+    const pieceChars: Record<PieceType, string> = {
+      'p': 'p',
+      'n': 'n', 
+      'b': 'b',
+      'r': 'r',
+      'q': 'q'
+    };
+    
+    const royalPieceChar = pieceChars[requestedPiece];
+    if (!royalPieceChar) {
+      console.error(`[GHOST] Unknown piece type: ${requestedPiece}`);
+      return null;
+    }
+    
+    try {
+      // Configure variant where requested piece is pseudo-royal
+      // extinctionPseudoRoyal makes the piece subject to "check" like a king
+      // extinctionValue = -VALUE_MATE means losing the piece is checkmate
+      const ghostVariantConfig = `
+[ghost_royal_${requestedPiece}:bughouse]
+extinctionPseudoRoyal = true
+extinctionValue = loss
+extinctionPieceTypes = ${royalPieceChar}
+`;
+      
+      console.log(`[GHOST] Variant config:\n${ghostVariantConfig}`);
+      
+      // Load custom variant configuration
+      // Note: This may not work if engine doesn't support runtime variant loading
+      // We may need to use UCI_Variant with a pre-configured variant instead
+      await engine.setOptions({ 
+        UCI_Variant: `ghost_royal_${requestedPiece}`,
+        VariantPath: ghostVariantConfig // Try inline config
+      });
+      
+      // Set ghost position with same FEN
+      await engine.setPosition(currentFen, []);
+      
+      // Get best move - engine will try to "checkmate" the royal piece
+      const ghostMove = await engine.getBestMove(this.thinkingTimeMs);
+      
+      // Reset to bughouse variant
+      await engine.setOptions({ UCI_Variant: 'bughouse' });
+      
+      console.log(`[GHOST] Ghost move: ${ghostMove?.from}${ghostMove?.to}`);
+      return ghostMove;
+      
+    } catch (error) {
+      console.error(`[GHOST] Error creating ghost position:`, error);
+      
+      // Reset to bughouse variant on error
+      try {
+        await engine.setOptions({ UCI_Variant: 'bughouse' });
+      } catch (resetError) {
+        console.error(`[GHOST] Error resetting variant:`, resetError);
+      }
+      
+      return null;
+    }
+  }
+
+  /**
+   * APPROACH 2: Get best move using high piece value (customPieceValue)
+   * Sets requested piece type to extreme value to make engine prioritize capturing it
+   */
+  private async getHighValuePieceMove(
+    _board: Board,
+    engine: IChessEngine,
+    currentFen: string,
+    requestedPiece: PieceType,
+    botName: 'Partner' | 'Bot 1' | 'Bot 2'
+  ): Promise<any | null> {
+    console.log(`[HIGH-VALUE] ${botName} creating ghost position with high-value ${requestedPiece}`);
+    
+    const pieceChars: Record<PieceType, string> = {
+      'p': 'p', 'n': 'n', 'b': 'b', 'r': 'r', 'q': 'q'
+    };
+    
+    const pieceChar = pieceChars[requestedPiece];
+    if (!pieceChar) {
+      console.error(`[HIGH-VALUE] Unknown piece type: ${requestedPiece}`);
+      return null;
+    }
+    
+    try {
+      // Create variant where requested piece has extreme value
+      // customPieceValue[p] = 99999 makes pawns worth 99999 centipawns
+      const ghostVariantConfig = `
+[ghost_highvalue_${requestedPiece}:bughouse]
+customPieceValue${pieceChar.toUpperCase()} = 99999
+`;
+      
+      console.log(`[HIGH-VALUE] Variant config:\n${ghostVariantConfig}`);
+      
+      await engine.setOptions({ 
+        UCI_Variant: `ghost_highvalue_${requestedPiece}`,
+        VariantPath: ghostVariantConfig
+      });
+      
+      await engine.setPosition(currentFen, []);
+      const ghostMove = await engine.getBestMove(this.thinkingTimeMs);
+      
+      // Reset to bughouse variant
+      await engine.setOptions({ UCI_Variant: 'bughouse' });
+      
+      console.log(`[HIGH-VALUE] Ghost move: ${ghostMove?.from}${ghostMove?.to}`);
+      return ghostMove;
+      
+    } catch (error) {
+      console.error(`[HIGH-VALUE] Error creating ghost position:`, error);
+      
+      try {
+        await engine.setOptions({ UCI_Variant: 'bughouse' });
+      } catch (resetError) {
+        console.error(`[HIGH-VALUE] Error resetting variant:`, resetError);
+      }
+      
+      return null;
+    }
+  }
+
+  /**
+   * APPROACH 3: Get best move using multi-PV proximity scoring
+   * Uses multiple principal variations and scores by Manhattan distance to target
+   */
+  private async getProximityMove(
+    board: Board,
+    engine: IChessEngine,
+    currentFen: string,
+    requestedPiece: PieceType,
+    botName: 'Partner' | 'Bot 1' | 'Bot 2'
+  ): Promise<any | null> {
+    console.log(`[PROXIMITY] ${botName} using multi-PV proximity scoring for ${requestedPiece}`);
+    
+    try {
+      // Set multi-PV to get multiple candidate moves
+      await engine.setOptions({ MultiPV: 5 });
+      await engine.setPosition(currentFen, []);
+      
+      // Get the best move (will be from PV 1)
+      const bestMove = await engine.getBestMove(this.thinkingTimeMs);
+      
+      // Find all target piece squares
+      const targetSquares = this.findPieceSquares(board, requestedPiece, false);
+      if (targetSquares.length === 0) {
+        console.log(`[PROXIMITY] No ${requestedPiece} pieces found`);
+        await engine.setOptions({ MultiPV: 1 });
+        return bestMove;
+      }
+      
+      console.log(`[PROXIMITY] Target ${requestedPiece} at: ${targetSquares.join(', ')}`);
+      
+      // Check if best move already captures or approaches target
+      if (bestMove && bestMove.to) {
+        const captured = this.getPieceAt(board, bestMove.to);
+        if (captured && this.piecesFulfillRequest(requestedPiece, captured.toLowerCase() as PieceType)) {
+          console.log(`[PROXIMITY] Best move already captures target!`);
+          await engine.setOptions({ MultiPV: 1 });
+          return bestMove;
+        }
+        
+        // Check proximity
+        const minDistBefore = Math.min(...targetSquares.map(sq => 
+          this.squareDistance(bestMove.from, sq)
+        ));
+        const minDistAfter = Math.min(...targetSquares.map(sq => 
+          this.squareDistance(bestMove.to, sq)
+        ));
+        
+        if (minDistAfter < minDistBefore) {
+          console.log(`[PROXIMITY] Best move approaches target (${minDistBefore} -> ${minDistAfter})`);
+          await engine.setOptions({ MultiPV: 1 });
+          return bestMove;
+        }
+      }
+      
+      // For now, just return best move
+      // Full implementation would parse all PVs and score them
+      console.log(`[PROXIMITY] Using best move (full PV scoring not implemented)`);
+      await engine.setOptions({ MultiPV: 1 });
+      return bestMove;
+      
+    } catch (error) {
+      console.error(`[PROXIMITY] Error:`, error);
+      await engine.setOptions({ MultiPV: 1 });
+      return null;
+    }
+  }
+
+  /**
+   * Find all squares containing a specific piece type
+   */
+  private findPieceSquares(board: Board, pieceType: PieceType, ownPieces: boolean): string[] {
+    const fen = board.getFen();
+    const fenParts = fen.split(' ');
+    const position = fenParts[0];
+    const currentTurn = board.getCurrentTurn();
+    const squares: string[] = [];
+    
+    const ranks = position.split('/');
+    for (let rank = 0; rank < 8; rank++) {
+      const rankStr = ranks[rank];
+      let file = 0;
+      
+      for (const char of rankStr) {
+        if (char >= '1' && char <= '8') {
+          file += parseInt(char);
+        } else {
+          const charPieceType = char.toLowerCase() as PieceType;
+          const pieceColor = char === char.toUpperCase() ? 'w' : 'b';
+          
+          // Check if this is the piece we're looking for
+          const isOwnPiece = pieceColor === currentTurn;
+          if (this.piecesFulfillRequest(pieceType, charPieceType) && isOwnPiece === ownPieces) {
+            const square = String.fromCharCode('a'.charCodeAt(0) + file) + (8 - rank);
+            squares.push(square);
+          }
+          file++;
+        }
+      }
+    }
+    
+    return squares;
+  }
+
+  /**
+   * Calculate Manhattan distance between two squares
+   */
+  private squareDistance(sq1: string, sq2: string): number {
+    const file1 = sq1.charCodeAt(0) - 'a'.charCodeAt(0);
+    const rank1 = parseInt(sq1[1]) - 1;
+    const file2 = sq2.charCodeAt(0) - 'a'.charCodeAt(0);
+    const rank2 = parseInt(sq2[1]) - 1;
+    
+    return Math.abs(file1 - file2) + Math.abs(rank1 - rank2);
   }
 
   /**
@@ -1022,12 +1532,16 @@ export class BughouseGame {
           if (shouldStall) {
             console.log(`[STALL] ${botName} STARTS stalling for ${piece} - NOT MOVING`);
             this.stallingState[this.botNameToKey(botName)] = { piece, reason: scenario };
+            
+            // Set partner request so partner tries to capture this piece
+            this.setPartnerRequest(botName, piece, scenario);
+            
             // Stalling means NOT MOVING - just return and let the clock run
             return;
           } else {
             // Not stalling (down on time) - just play the move
             const move = await engine.getBestMove(this.thinkingTimeMs);
-            const fulfilledBots = await this.executeMoveOnBoard(board, engine, move);
+            await this.executeMoveOnBoard(board, engine, move);
             // Bots with fulfilled requests will move on their next turn (stalling state cleared)
             return;
           }
@@ -1048,6 +1562,9 @@ export class BughouseGame {
           // We're stalling - send scenario-specific message
           console.log(`[STALL] ${botName} STARTS stalling for ${piece} - NOT MOVING`);
           this.stallingState[this.botNameToKey(botName)] = { piece, reason: scenario };
+          
+          // Set partner request so partner tries to capture this piece
+          this.setPartnerRequest(botName, piece, scenario);
           
           // Reset down time message flag since we're back to stalling (up on time)
           this.downTimeMessageSent[this.botNameToKey(botName)] = false;
@@ -1094,10 +1611,10 @@ export class BughouseGame {
         }
       }
 
-      // No stalling needed - get and play best move
-      const move = await engine.getBestMove(this.thinkingTimeMs);
+      // No stalling needed - get and play best move (considering partner requests)
+      const move = await this.getBestMoveWithPartnerRequest(board, engine, botName);
       
-      const fulfilledBots = await this.executeMoveOnBoard(board, engine, move);
+      await this.executeMoveOnBoard(board, engine, move);
       
       // Bots with fulfilled requests will move on their next turn (stalling state cleared)
       // No need to immediately resume - just let them move naturally
@@ -1126,7 +1643,7 @@ export class BughouseGame {
       
       if (!pool.removePiece(pieceType)) {
         console.error(`[DROP ERROR] Piece ${pieceType} not available in ${dropColor} pool`);
-        return; // Can't drop a piece that's not available
+        return []; // Can't drop a piece that's not available
       }
     }
 
@@ -1168,6 +1685,7 @@ export class BughouseGame {
             }
             
             delete this.stallingState[botKey];
+            this.clearPartnerRequest(stallingBotName); // Clear this bot's request to their partner
             
             // Determine which board and engine this bot uses
             let botBoard: Board;
