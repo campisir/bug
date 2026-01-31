@@ -29,6 +29,14 @@ export class FairyStockfishEngine implements IChessEngine {
           return;
         }
 
+        // Capture all UCI output to log available options
+        const uciLines: string[] = [];
+        const originalHandleOutput = this.handleOutput.bind(this);
+        this.handleOutput = (data: string) => {
+          uciLines.push(data);
+          originalHandleOutput(data);
+        };
+
         // Handle stdout data
         this.process.stdout.on('data', (data: unknown) => {
           this.handleOutput(String(data));
@@ -49,6 +57,13 @@ export class FairyStockfishEngine implements IChessEngine {
         
         // Wait for uciok response
         this.waitForResponse('uciok', () => {
+          // Log all UCI options for research
+          console.log('=== FAIRY-STOCKFISH UCI OPTIONS ===');
+          const allOutput = uciLines.join('');
+          const optionLines = allOutput.split('\n').filter(line => line.includes('option name'));
+          optionLines.forEach(line => console.log(line.trim()));
+          console.log('=== END UCI OPTIONS ===');
+          
           resolve();
         });
       } catch (error) {
@@ -67,6 +82,26 @@ export class FairyStockfishEngine implements IChessEngine {
     return new Promise((resolve, reject) => {
       this.sendCommand(`go movetime ${timeMs}`);
       
+      this.waitForResponse('bestmove', (response) => {
+        console.log('[ENGINE] Bestmove response:', response);
+        const match = response.match(/bestmove\s+(\S+)/);
+        if (match) {
+          const moveStr = match[1];
+          console.log('[ENGINE] Extracted move string:', JSON.stringify(moveStr));
+          resolve(this.parseMove(moveStr));
+        } else {
+          reject(new Error('Failed to parse best move'));
+        }
+      });
+    });
+  }
+
+  async getBestMoveWithSearchMoves(timeMs: number, searchMoves: string[]): Promise<EngineMove> {
+    return new Promise((resolve, reject) => {
+      const moves = searchMoves.filter(Boolean);
+      const searchMovesPart = moves.length > 0 ? ` searchmoves ${moves.join(' ')}` : '';
+      this.sendCommand(`go movetime ${timeMs}${searchMovesPart}`);
+
       this.waitForResponse('bestmove', (response) => {
         console.log('[ENGINE] Bestmove response:', response);
         const match = response.match(/bestmove\s+(\S+)/);

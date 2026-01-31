@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         initialize: (engineId, enginePath) => ipcRenderer.invoke('engine:initialize', engineId, enginePath),
         setPosition: (engineId, fen, moves) => ipcRenderer.invoke('engine:setPosition', engineId, fen, moves),
         getBestMove: (engineId, timeMs) => ipcRenderer.invoke('engine:getBestMove', engineId, timeMs),
+        getBestMoveWithSearchMoves: (engineId, timeMs, searchMoves) => ipcRenderer.invoke('engine:getBestMoveWithSearchMoves', engineId, timeMs, searchMoves),
         getEvaluation: (engineId, depth) => ipcRenderer.invoke('engine:getEvaluation', engineId, depth),
         setOptions: (engineId, options) => ipcRenderer.invoke('engine:setOptions', engineId, options),
         shutdown: (engineId) => ipcRenderer.invoke('engine:shutdown', engineId),

@@ -43,6 +43,14 @@ export interface IChessEngine {
   getBestMove(timeMs: number): Promise<EngineMove>;
 
   /**
+   * Request the engine to analyze and return the best move from a restricted set
+   * @param timeMs - Time limit in milliseconds
+   * @param searchMoves - UCI moves to restrict search to
+   * @returns Promise resolving to the best move among the given moves
+   */
+  getBestMoveWithSearchMoves(timeMs: number, searchMoves: string[]): Promise<EngineMove>;
+
+  /**
    * Get position evaluation at specified depth
    * @param depth - Search depth
    * @returns Promise resolving to engine evaluation info

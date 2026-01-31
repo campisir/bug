@@ -61,6 +61,26 @@ export class FairyStockfishEngine {
             });
         });
     }
+    async getBestMoveWithSearchMoves(timeMs, searchMoves) {
+        return new Promise((resolve, reject) => {
+            const moves = searchMoves.filter(Boolean);
+            const searchMovesPart = moves.length > 0 ? ` searchmoves ${moves.join(' ')}` : '';
+            console.log(`[UCI] Requesting best move (${timeMs}ms) with searchmoves:`, moves);
+            this.sendCommand(`go movetime ${timeMs}${searchMovesPart}`);
+            this.waitForResponse('bestmove', (response) => {
+                const match = response.match(/bestmove\s+(\S+)/);
+                if (match) {
+                    const moveStr = match[1];
+                    const parsedMove = this.parseMove(moveStr);
+                    console.log('[UCI] Best move received:', moveStr, '→', parsedMove);
+                    resolve(parsedMove);
+                }
+                else {
+                    reject(new Error('Failed to parse best move'));
+                }
+            });
+        });
+    }
     async getEvaluation(depth) {
         return new Promise((resolve, reject) => {
             let lastInfo = null;

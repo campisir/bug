@@ -32,6 +32,12 @@ class EngineManager {
             throw new Error(`Engine ${engineId} not initialized`);
         return await engine.getBestMove(timeMs);
     }
+    async getBestMoveWithSearchMoves(engineId, timeMs, searchMoves) {
+        const engine = this.engines.get(engineId);
+        if (!engine)
+            throw new Error(`Engine ${engineId} not initialized`);
+        return await engine.getBestMoveWithSearchMoves(timeMs, searchMoves);
+    }
     async getEvaluation(engineId, depth) {
         const engine = this.engines.get(engineId);
         if (!engine)
@@ -42,7 +48,14 @@ class EngineManager {
         const engine = this.engines.get(engineId);
         if (!engine)
             throw new Error(`Engine ${engineId} not initialized`);
-        await engine.setOptions(options);
+        const resolvedOptions = { ...options };
+        if (typeof resolvedOptions.VariantPath === 'string') {
+            const variantPath = resolvedOptions.VariantPath;
+            resolvedOptions.VariantPath = path.isAbsolute(variantPath)
+                ? variantPath
+                : path.join(process.cwd(), variantPath);
+        }
+        await engine.setOptions(resolvedOptions);
     }
     async shutdown(engineId) {
         const engine = this.engines.get(engineId);
@@ -80,6 +93,9 @@ export function registerEngineHandlers() {
     });
     ipcMain.handle('engine:getBestMove', async (_event, engineId, timeMs) => {
         return await engineManager.getBestMove(engineId, timeMs);
+    });
+    ipcMain.handle('engine:getBestMoveWithSearchMoves', async (_event, engineId, timeMs, searchMoves) => {
+        return await engineManager.getBestMoveWithSearchMoves(engineId, timeMs, searchMoves);
     });
     ipcMain.handle('engine:getEvaluation', async (_event, engineId, depth) => {
         return await engineManager.getEvaluation(engineId, depth);

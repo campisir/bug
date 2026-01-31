@@ -3,6 +3,7 @@ import { ChessBoard } from './ChessBoard';
 import { PiecePoolDisplay } from './PiecePoolDisplay';
 import { ChessClock } from './ChessClock';
 import { ChatBox } from './ChatBox';
+import { GameLog } from './GameLog';
 import { useGameStore } from '../store/gameStore';
 import type { PieceType } from '../game/PiecePool';
 
@@ -42,8 +43,34 @@ export function GameContainer() {
   const sendGoCommand = useGameStore((state) => state.sendGoCommand);
   const sendSitCommand = useGameStore((state) => state.sendSitCommand);
   const tickClock = useGameStore((state) => state.tickClock);
+  const resign = useGameStore((state) => state.resign);
 
   const [showGameOver, setShowGameOver] = useState(true);
+  const [showGameLog, setShowGameLog] = useState(false);
+  const [selectedPosition, setSelectedPosition] = useState<string>('standard');
+
+  const startingPositions: Record<string, { name: string; playerFen: string; partnerFen: string }> = {
+    standard: {
+      name: 'Standard',
+      playerFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+      partnerFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+    },
+    qMates: {
+      name: 'Q Mates',
+      playerFen: 'rnbqkb1r/pppp1ppp/4pn2/8/8/4P3/PPPPKPPP/RNBQ1BNR w KQkq - 0 1',
+      partnerFen: 'rnb1kbnr/pppp1ppp/5q2/4p3/4P3/5Q2/PPPP1PPP/RNB1KBNR w KQkq - 0 1',
+    },
+    sacForKnight: {
+      name: 'Sac for Knight',
+      playerFen: 'rnbqkbnr/pppppppp/8/8/8/8/PP1PPPPP/KR1NQBNR w KQkq - 0 1',
+      partnerFen: 'rnbqkb1r/pppp1ppp/4pn2/8/8/4PQ2/PPPP1PPP/RNB1KBNR w KQkq - 0 1',
+    },
+    forkForQueen: {
+      name: 'Fork for Queen',
+      playerFen: 'rnbqkb1r/pppp1ppp/4pn2/8/8/4P3/PPPPKPPP/RNBQ1BNR w KQkq - 0 1',
+      partnerFen: 'rnb1kbnr/ppppp1pp/5p1q/8/8/5QN1/PPPPPPPP/RNB1KB1R w KQkq - 0 1',
+    },
+  };
 
   useEffect(() => {
     console.log('[GameContainer] Component mounted');
@@ -52,8 +79,9 @@ export function GameContainer() {
 
   useEffect(() => {
     // Initialize the game when component mounts
-    initialize();
-  }, [initialize]);
+    const position = startingPositions[selectedPosition];
+    initialize(position.playerFen, position.partnerFen);
+  }, [initialize, selectedPosition]);
 
   useEffect(() => {
     // Set up clock ticker (100ms intervals)
@@ -101,8 +129,23 @@ export function GameContainer() {
     <div className="game-container">
       <div className="game-header">
         <h1>Bughouse Chess</h1>
-        <div className="game-status">
-          Status: <span className="status-badge">{gameStatus}</span>
+        <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
+          <div className="game-status">
+            Status: <span className="status-badge">{gameStatus}</span>
+          </div>
+          <div className="position-selector">
+            <label htmlFor="position-select">Starting Position: </label>
+            <select 
+              id="position-select" 
+              value={selectedPosition} 
+              onChange={(e) => setSelectedPosition(e.target.value)}
+              disabled={gameStatus === 'in_progress'}
+            >
+              {Object.entries(startingPositions).map(([key, pos]) => (
+                <option key={key} value={key}>{pos.name}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -119,9 +162,14 @@ export function GameContainer() {
               {gameStatus === 'draw' && '🤝 Draw'}
               {gameStatus === 'finished' && '⏱️ Time Out'}
             </p>
-            <button onClick={() => setShowGameOver(false)} className="close-button">
-              Close
-            </button>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+              <button onClick={() => setShowGameOver(false)} className="close-button">
+                Close
+              </button>
+              <button onClick={() => setShowGameLog(true)} className="close-button" style={{ background: '#2196F3' }}>
+                View Game Log
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -131,10 +179,13 @@ export function GameContainer() {
         <div className="board-section player-board">
           <div className="board-header">
             <h2>Your Board</h2>
-            <span className="board-info">
-              Playing as {playerBoard?.getPlayerColor() === 'w' ? 'White' : 'Black'}
-              {selectedPiece && <span style={{marginLeft: '10px', color: '#e67e22'}}>● Drop mode: {selectedPiece.toUpperCase()}</span>}
-            </span>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', justifyContent: 'center' }}>
+              <span className="board-info">
+                Playing as {playerBoard?.getPlayerColor() === 'w' ? 'White' : 'Black'}
+                {selectedPiece && <span style={{marginLeft: '10px', color: '#e67e22'}}>● Drop mode: {selectedPiece.toUpperCase()}</span>}
+              </span>
+              <button onClick={resign} className="control-button resign-button">Resign</button>
+            </div>
           </div>
           
           <div className="board-with-pool">
@@ -268,6 +319,38 @@ export function GameContainer() {
           font-size: 14px;
         }
 
+        .position-selector {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .position-selector label {
+          font-size: 14px;
+          color: #666;
+          font-weight: 500;
+        }
+
+        .position-selector select {
+          padding: 6px 12px;
+          border: 1px solid #ddd;
+          border-radius: 4px;
+          background: white;
+          font-size: 14px;
+          cursor: pointer;
+          outline: none;
+        }
+
+        .position-selector select:hover:not(:disabled) {
+          border-color: #4CAF50;
+        }
+
+        .position-selector select:disabled {
+          background: #f5f5f5;
+          cursor: not-allowed;
+          opacity: 0.6;
+        }
+
         .boards-container {
           display: flex;
           gap: 30px;
@@ -323,7 +406,19 @@ export function GameContainer() {
         .control-button:hover {
           background: #45a049;
         }
+        .resign-button {
+          background: #f44336;
+        }
 
+        .resign-button:hover {
+          background: #da190b;
+        }        .resign-button {
+          background: #f44336;
+        }
+
+        .resign-button:hover {
+          background: #da190b;
+        }
         .control-button:active {
           background: #3d8b40;
         }
@@ -464,6 +559,11 @@ export function GameContainer() {
           }
         }
       `}</style>
+
+      {/* Game Log Modal */}
+      {showGameLog && (
+        <GameLog onClose={() => setShowGameLog(false)} />
+      )}
     </div>
   );
 }

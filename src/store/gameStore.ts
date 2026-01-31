@@ -5,6 +5,7 @@ import type { BughouseGameConfig } from '../game/BughouseGame';
 import type { PieceType } from '../game/PiecePool';
 import { ElectronIPCEngine } from '../engines/ElectronIPCEngine';
 import type { ChatMessage } from '../components/ChatBox';
+import { useGameLogStore } from './gameLogStore';
 
 export type { ChatMessage };
 
@@ -33,7 +34,7 @@ interface GameState {
   partnerBlackTime: number;
   
   // Actions
-  initialize: () => Promise<void>;
+  initialize: (playerBoardFen?: string, partnerBoardFen?: string) => Promise<void>;
   makeMove: (from: string, to: string, promotion?: string) => Promise<void>;
   dropPiece: (square: string, pieceType: PieceType) => Promise<void>;
   selectPiece: (pieceType: PieceType | null) => void;
@@ -45,6 +46,7 @@ interface GameState {
   reset: () => void;
   tickClock: () => void;
   addChatMessage: (sender: ChatMessage['sender'], message: string) => void;
+  resign: () => void;
 }
 
 /**
@@ -72,12 +74,15 @@ export const useGameStore = create<GameState>((set, get) => ({
   
   // Initialize clocks: Bot 1 (playerBlack) at 10 minutes, others at 5 minutes
   playerWhiteTime: 300000,
-  playerBlackTime: 310000, // Bot 1 gets 10 minutes for testing
-  partnerWhiteTime: 310000,
+  playerBlackTime: 410000, // Bot 1 gets 10 minutes for testing
+  partnerWhiteTime: 410000,
   partnerBlackTime: 300000,
 
-  initialize: async () => {
+  initialize: async (playerBoardFen?: string, partnerBoardFen?: string) => {
     try {
+      // Start logging
+      useGameLogStore.getState().startLogging();
+
       // Engine path relative to project root
       const enginePath = 'engines/fairy-stockfish.exe';
 
@@ -99,6 +104,11 @@ export const useGameStore = create<GameState>((set, get) => ({
             partnerBlack: state.partnerBlackTime,
           };
         },
+        onLog: (category, message, actor) => {
+          useGameLogStore.getState().addLog(category, message, actor);
+        },
+        playerBoardFen,
+        partnerBoardFen,
       };
 
       const game = new BughouseGame(config);
@@ -345,6 +355,14 @@ export const useGameStore = create<GameState>((set, get) => ({
     
     if (Object.keys(updates).length > 0) {
       set(updates);
+    }
+  },
+
+  resign: () => {
+    const { game } = get();
+    if (game) {
+      game.resign();
+      get().updateBoards();
     }
   },
 }));

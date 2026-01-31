@@ -27,6 +27,17 @@ export class ElectronIPCEngine implements IChessEngine {
     return await window.electronAPI.engine.getBestMove(this.engineId, timeMs);
   }
 
+  async getBestMoveWithSearchMoves(timeMs: number, searchMoves: string[]): Promise<EngineMove> {
+    try {
+      return await window.electronAPI.engine.getBestMoveWithSearchMoves(this.engineId, timeMs, searchMoves);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn('[IPC] getBestMoveWithSearchMoves failed:', message);
+      console.warn('[IPC] Falling back to getBestMove. Restart Electron after rebuild to register the handler.');
+      return await window.electronAPI.engine.getBestMove(this.engineId, timeMs);
+    }
+  }
+
   async getEvaluation(depth: number): Promise<EngineInfo> {
     return await window.electronAPI.engine.getEvaluation(this.engineId, depth);
   }

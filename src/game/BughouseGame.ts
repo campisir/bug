@@ -35,6 +35,9 @@ export interface BughouseGameConfig {
   thinkingTimeMs?: number; // Time for engine to think (default: 1000ms)
   onChatMessage?: (sender: 'Partner' | 'Bot 1' | 'Bot 2' | 'System' | 'You', message: string) => void;
   getClockTimes?: () => { playerWhite: number; playerBlack: number; partnerWhite: number; partnerBlack: number };
+  onLog?: (category: 'moves' | 'stalls' | 'stall_details' | 'requests' | 'captures' | 'game_events' | 'chat', message: string, actor?: 'Player' | 'Bot 1' | 'Bot 2' | 'Partner') => void;
+  playerBoardFen?: string; // Custom starting position for player board
+  partnerBoardFen?: string; // Custom starting position for partner board
 }
 
 // Partner request approach modes
@@ -45,7 +48,7 @@ export class BughouseGame {
   // 'royal-piece' = Ghost position with extinctionPseudoRoyal
   // 'high-value' = Ghost position with customPieceValue = 99999
   // 'proximity' = Multi-PV with Manhattan distance scoring
-  private partnerRequestApproach: PartnerRequestApproach = 'royal-piece';
+  private partnerRequestApproach: PartnerRequestApproach = 'high-value';
   
   private playerBoard: Board;
   private partnerBoard: Board;
@@ -59,6 +62,7 @@ export class BughouseGame {
   private onUpdate?: () => void;
   private onChatMessage?: (sender: 'Partner' | 'Bot 1' | 'Bot 2' | 'System' | 'You', message: string) => void;
   private getClockTimes?: () => { playerWhite: number; playerBlack: number; partnerWhite: number; partnerBlack: number };
+  private onLog?: (category: 'moves' | 'stalls' | 'stall_details' | 'requests' | 'captures' | 'game_events' | 'chat', message: string, actor?: 'Player' | 'Bot 1' | 'Bot 2' | 'Partner') => void;
   private isPartnerBoardPlaying: boolean = false;
   private isPaused: boolean = false;
   private lastPlayerMoveCount: number = 0;
@@ -90,13 +94,13 @@ export class BughouseGame {
 
   constructor(config: BughouseGameConfig) {
     // Player board: player vs engine
-    this.playerBoard = new Board('player', config.playerColor);
+    this.playerBoard = new Board('player', config.playerColor, config.playerBoardFen);
     
     // Partner board: two engines playing
     // Partner plays OPPOSITE color from player for proper piece flow
     // If player is white, partner is black (and vice versa)
     const partnerColor = config.playerColor === 'w' ? 'b' : 'w';
-    this.partnerBoard = new Board('partner', partnerColor);
+    this.partnerBoard = new Board('partner', partnerColor, config.partnerBoardFen);
     
     this.getClockTimes = config.getClockTimes;
     this.engines = {
@@ -107,6 +111,22 @@ export class BughouseGame {
 
     this.thinkingTimeMs = config.thinkingTimeMs || 1000;
     this.onChatMessage = config.onChatMessage;
+    this.onLog = config.onLog;
+  }
+
+  /**
+   * Helper to send chat message and log it
+   */
+  private sendChatMessage(sender: 'Partner' | 'Bot 1' | 'Bot 2' | 'System' | 'You', message: string): void {
+    if (this.onChatMessage) {
+      this.onChatMessage(sender, message);
+    }
+    // Don't log System messages
+    if (sender !== 'System' && sender !== 'You') {
+      this.onLog?.('chat', message, sender);
+    } else if (sender === 'You') {
+      this.onLog?.('chat', message, 'Player');
+    }
   }
 
   /**
@@ -136,6 +156,7 @@ export class BughouseGame {
     this.status = GameStatus.IN_PROGRESS;
     
     console.log('Game starting...');
+    this.onLog?.('game_events', 'GAME STARTED');
     
     // If player is black, make the first engine move
     if (this.playerBoard.getPlayerColor() === 'b') {
@@ -165,6 +186,7 @@ export class BughouseGame {
     const captured = this.getPieceAt(this.playerBoard, to);
     if (captured) {
       console.log(`[CAPTURE] Detected capture at ${to}: ${captured}`);
+      this.onLog?.('captures', `Captured ${captured} at ${to}`, 'Player');
     }
     
     // Add move to history
@@ -175,6 +197,49 @@ export class BughouseGame {
       captured,
       promotion,
     });
+
+    // Get evaluation after the move (from White's perspective)
+    let evalString = '';
+    try {
+      const baseFen = this.playerBoard.getFen();
+      const fenParts = baseFen.split(' ');
+      const whitePool = this.playerBoard.getWhitePiecePool();
+      const blackPool = this.playerBoard.getBlackPiecePool();
+      const whiteHoldings = this.buildHoldingsString(whitePool, true);
+      const blackHoldings = this.buildHoldingsString(blackPool, false);
+      const holdings = whiteHoldings + blackHoldings;
+      const fenWithHoldings = holdings 
+        ? `${fenParts[0]}[${holdings}] ${fenParts.slice(1).join(' ')}`
+        : baseFen;
+      
+      await this.engines.player.setPosition(fenWithHoldings, []);
+      const evaluation = await this.engines.player.getEvaluation(12);
+      
+      if (evaluation.isMate) {
+        const currentTurn = this.playerBoard.getCurrentTurn();
+        if (currentTurn === 'w') {
+          evalString = evaluation.score > 0 
+            ? `[White mates in ${evaluation.score}]` 
+            : `[Black mates in ${Math.abs(evaluation.score)}]`;
+        } else {
+          evalString = evaluation.score > 0 
+            ? `[Black mates in ${evaluation.score}]` 
+            : `[White mates in ${Math.abs(evaluation.score)}]`;
+        }
+      } else {
+        const cpScore = (evaluation.score / 100).toFixed(2);
+        evalString = evaluation.score >= 0 
+          ? `[+${cpScore}]` 
+          : `[${cpScore}]`;
+      }
+    } catch (error) {
+      console.error('[EVAL] Error getting evaluation:', error);
+      evalString = '[eval error]';
+    }
+
+    // Log the move with evaluation
+    const moveNotation = promotion ? `${from}${to}=${promotion}` : `${from}${to}`;
+    this.onLog?.('moves', `${moveNotation} ${evalString}`, 'Player');
 
     // Update partner's piece pool with any captured pieces
     this.updatePiecePools();
@@ -257,6 +322,48 @@ export class BughouseGame {
       dropColor: 'w', // Player is always white
     });
 
+    // Get evaluation after the drop (from White's perspective)
+    let evalString = '';
+    try {
+      const baseFen = this.playerBoard.getFen();
+      const fenParts = baseFen.split(' ');
+      const whitePool = this.playerBoard.getWhitePiecePool();
+      const blackPool = this.playerBoard.getBlackPiecePool();
+      const whiteHoldings = this.buildHoldingsString(whitePool, true);
+      const blackHoldings = this.buildHoldingsString(blackPool, false);
+      const holdings = whiteHoldings + blackHoldings;
+      const fenWithHoldings = holdings 
+        ? `${fenParts[0]}[${holdings}] ${fenParts.slice(1).join(' ')}`
+        : baseFen;
+      
+      await this.engines.player.setPosition(fenWithHoldings, []);
+      const evaluation = await this.engines.player.getEvaluation(12);
+      
+      if (evaluation.isMate) {
+        const currentTurn = this.playerBoard.getCurrentTurn();
+        if (currentTurn === 'w') {
+          evalString = evaluation.score > 0 
+            ? `[White mates in ${evaluation.score}]` 
+            : `[Black mates in ${Math.abs(evaluation.score)}]`;
+        } else {
+          evalString = evaluation.score > 0 
+            ? `[Black mates in ${evaluation.score}]` 
+            : `[White mates in ${Math.abs(evaluation.score)}]`;
+        }
+      } else {
+        const cpScore = (evaluation.score / 100).toFixed(2);
+        evalString = evaluation.score >= 0 
+          ? `[+${cpScore}]` 
+          : `[${cpScore}]`;
+      }
+    } catch (error) {
+      console.error('[EVAL] Error getting evaluation:', error);
+      evalString = '[eval error]';
+    }
+
+    // Log the drop with evaluation
+    this.onLog?.('moves', `${pieceType.toUpperCase()}@${square} ${evalString}`, 'Player');
+
     // Trigger update callback
     if (this.onUpdate) {
       this.onUpdate();
@@ -275,18 +382,34 @@ export class BughouseGame {
       this.playPartnerBoard().catch(err => console.error('Partner board error:', err));
     }
 
+    // Check if game is still in progress before engine responds
+    if (this.status !== GameStatus.IN_PROGRESS) {
+      return true;
+    }
+
     // Engine responds
     await this.makeEngineMove(this.playerBoard, this.engines.player);
 
     // Check if any bot should abandon stalling due to time and resume
     const botsToResume = this.checkTimeBasedStallAbandonment();
     for (const { botName, board, engine } of botsToResume) {
+      if (this.status !== GameStatus.IN_PROGRESS) break;
       console.log(`[STALL] ${botName} resuming immediately after time abandonment`);
       // Set position before getting move
       await engine.setPosition(board.getFen(), []);
       // Directly make a move without re-evaluating stalling logic
       const move = await engine.getBestMove(this.thinkingTimeMs);
-      await this.executeMoveOnBoard(board, engine, move);
+      const fulfilled = await this.executeMoveOnBoard(board, engine, move);
+      // Update pools BEFORE fulfilled bots move
+      if (fulfilled.length > 0) {
+        this.updatePiecePools();
+      }
+      // Handle any fulfilled bots from this move
+      for (const { botName: fbn, board: fb, engine: fe } of fulfilled) {
+        if (this.status !== GameStatus.IN_PROGRESS) break;
+        const fm = await this.getBestMoveWithPartnerRequest(fb, fe, fbn);
+        await this.executeMoveOnBoard(fb, fe, fm);
+      }
     }
     
     // Update pools after engine response
@@ -331,8 +454,10 @@ export class BughouseGame {
       const losingColor = this.playerBoard.getCurrentTurn();
       if (losingColor === this.playerBoard.getPlayerColor()) {
         this.status = GameStatus.PLAYER_LOST;
+        this.onLog?.('game_events', 'GAME OVER: Player lost by checkmate');
       } else {
         this.status = GameStatus.PLAYER_WON;
+        this.onLog?.('game_events', 'GAME OVER: Player won by checkmate');
       }
       console.log(`[GAME] Player board TRUE checkmate: ${this.status}`);
       return;
@@ -341,6 +466,7 @@ export class BughouseGame {
     // Check for stalemate on player board
     if (this.playerBoard.isStalemate()) {
       this.status = GameStatus.DRAW;
+      this.onLog?.('game_events', 'GAME OVER: Stalemate on player board');
       console.log(`[GAME] Player board stalemate`);
       return;
     }
@@ -351,8 +477,10 @@ export class BughouseGame {
       const losingColor = this.partnerBoard.getCurrentTurn();
       if (losingColor === this.partnerBoard.getPlayerColor()) {
         this.status = GameStatus.PARTNER_LOST;
+        this.onLog?.('game_events', 'GAME OVER: Partner lost by checkmate');
       } else {
         this.status = GameStatus.PARTNER_WON;
+        this.onLog?.('game_events', 'GAME OVER: Partner won by checkmate');
       }
       console.log(`[GAME] Partner board TRUE checkmate: ${this.status}`);
       return;
@@ -469,6 +597,18 @@ export class BughouseGame {
     }
   }
 
+  resign(): void {
+    if (this.status === GameStatus.IN_PROGRESS) {
+      console.log('[GAME] Player resigned');
+      this.status = GameStatus.PLAYER_LOST;
+      this.onLog?.('game_events', 'GAME OVER: Player resigned');
+      this.isPaused = true; // Stop the game
+      if (this.onUpdate) {
+        this.onUpdate();
+      }
+    }
+  }
+
   isPausedState(): boolean {
     return this.isPaused;
   }
@@ -507,6 +647,9 @@ export class BughouseGame {
     const partnerName = this.getPartnerBotName(botName);
     if (!partnerName) return;
 
+    console.log(`[PARTNER REQUEST] ${botName} requests ${piece} from ${partnerName} (${reason})`);
+    this.onLog?.('requests', `Sent request to ${partnerName} for ${piece} (${reason})`, botName);
+
     const partnerKey = this.botNameToKey(partnerName) as 'bot1' | 'partner' | 'bot2';
     const requesterKey = botName === 'Bot 1' ? 'bot1' : botName === 'Bot 2' ? 'bot2' : 'partner';
     
@@ -534,8 +677,8 @@ export class BughouseGame {
     // Send "I will try." response after 1-2 second delay
     const delay = 1000 + Math.random() * 1000;
     setTimeout(() => {
-      if (this.onChatMessage && this.partnerRequests[partnerKey]) {
-        this.onChatMessage(partnerName, 'I will try.');
+      if (this.partnerRequests[partnerKey]) {
+        this.sendChatMessage(partnerName, 'I will try.');
       }
     }, delay);
   }
@@ -563,13 +706,6 @@ export class BughouseGame {
     const botKey = this.botNameToKey(botName);
     const request = this.partnerRequests[botKey];
 
-    // No request - get normal best move
-    if (!request) {
-      return await engine.getBestMove(this.thinkingTimeMs);
-    }
-
-    console.log(`[PARTNER REQUEST] ${botName} attempting to capture ${request.piece} (reason: ${request.reason})`);
-
     // Build current position FEN with holdings
     const baseFen = board.getFen();
     const fenParts = baseFen.split(' ');
@@ -582,36 +718,50 @@ export class BughouseGame {
       ? `${fenParts[0]}[${holdings}] ${fenParts.slice(1).join(' ')}`
       : baseFen;
 
+    if (botName === 'Bot 1') {
+      const whitePoolContents = Object.fromEntries(whitePool.getAllPieces());
+      const blackPoolContents = Object.fromEntries(blackPool.getAllPieces());
+      console.log(`[POSITION] ${botName} base FEN: ${baseFen}`);
+      console.log(`[POSITION] ${botName} holdings: ${holdings || '(none)'}`);
+      console.log(`[POSITION] ${botName} FEN with holdings: ${fenWithHoldings}`);
+      console.log(`[POSITION] ${botName} pool state - White:`, whitePoolContents, 'Black:', blackPoolContents);
+      this.onLog?.('stall_details', `Bot 1 base FEN: ${baseFen}`, botName);
+      this.onLog?.('stall_details', `Bot 1 holdings: ${holdings || '(none)'}`, botName);
+      this.onLog?.('stall_details', `Bot 1 FEN+holdings: ${fenWithHoldings}`, botName);
+      this.onLog?.('stall_details', `Bot 1 pool state - White: ${JSON.stringify(whitePoolContents)}, Black: ${JSON.stringify(blackPoolContents)}`, botName);
+    }
+
     await engine.setPosition(fenWithHoldings, []);
+
+    // No request - get normal best move (but still use holdings-aware position)
+    if (!request) {
+      return await engine.getBestMove(this.thinkingTimeMs);
+    }
+
+    console.log(`[PARTNER REQUEST] ${botName} attempting to capture ${request.piece} (reason: ${request.reason})`);
 
     // STEP 0: Check if we can deliver checkmate - always prioritize winning
     const currentEval = await engine.getEvaluation(12);
     if (currentEval.isMate && currentEval.score > 0 && Math.abs(currentEval.score) <= 5) {
       console.log(`[PARTNER REQUEST] ${botName} can checkmate in ${currentEval.score} - ignoring request`);
-      return await engine.getBestMove(this.thinkingTimeMs);
+      const mateMove = await engine.getBestMove(this.thinkingTimeMs);
+      console.log(`[ENGINE] ${botName} checkmate move:`, JSON.stringify(mateMove));
+      this.onLog?.('stall_details', `Engine returned checkmate move: ${JSON.stringify(mateMove)}`, botName);
+      return mateMove;
     }
 
-    // STEP 1: Check if requested piece is immediately capturable
-    const normalMove = await engine.getBestMove(this.thinkingTimeMs);
-    
-    // Check if normal best move captures the requested piece
-    if (normalMove && normalMove.to) {
-      const targetPiece = this.getPieceAt(board, normalMove.to);
-      if (targetPiece) {
-        const capturedType = targetPiece.toLowerCase() as PieceType;
-        if (this.piecesFulfillRequest(request.piece, capturedType)) {
-          console.log(`[PARTNER REQUEST] ${botName} best move already captures ${capturedType}!`);
-          return normalMove;
-        }
-      }
-    }
-
-    // Look for other moves that capture the requested piece
-    const capturingMove = await this.findImmediateCapture(board, engine, request.piece, request.reason, botName);
+    // STEP 1: Look for immediate captures using high-value approach
+    console.log(`[PARTNER REQUEST] ${botName} checking for immediate capture of ${request.piece}`);
+    const capturingMove = await this.findImmediateCapture(board, engine, request.piece, request.reason, botName, fenWithHoldings);
     if (capturingMove) {
-      console.log(`[PARTNER REQUEST] ${botName} found immediate capture of ${request.piece}`);
+      console.log(`[PARTNER REQUEST] ${botName} found immediate capture of ${request.piece}: ${capturingMove.from}${capturingMove.to}`);
       return capturingMove;
     }
+    
+    // Get normal best move as fallback for Step 2
+    await engine.setPosition(fenWithHoldings, []);
+    const normalMove = await engine.getBestMove(this.thinkingTimeMs);
+    console.log(`[ENGINE] ${botName} normal best move:`, JSON.stringify(normalMove));
 
     // STEP 2: Use configured approach to find move toward requested piece
     console.log(`[PARTNER REQUEST] ${botName} no immediate capture - using approach: ${this.partnerRequestApproach}`);
@@ -641,6 +791,8 @@ export class BughouseGame {
       
       if (specialMove && specialMove.from && specialMove.to) {
         console.log(`[PARTNER REQUEST] ${botName} playing ${this.partnerRequestApproach} move: ${specialMove.from}${specialMove.to}`);
+        console.log(`[ENGINE] ${botName} ${this.partnerRequestApproach} move:`, JSON.stringify(specialMove));
+        this.onLog?.('stall_details', `Engine (${this.partnerRequestApproach}) returned: ${JSON.stringify(specialMove)}`, botName);
         return specialMove;
       }
     } catch (error) {
@@ -649,19 +801,24 @@ export class BughouseGame {
     
     // Fallback to normal move
     console.log(`[PARTNER REQUEST] ${botName} no forcing line to ${request.piece} - playing normal move`);
+    console.log(`[ENGINE] ${botName} fallback to normal move:`, JSON.stringify(normalMove));
+    this.onLog?.('stall_details', `Engine (normal) returned: ${JSON.stringify(normalMove)}`, botName);
     return normalMove;
   }
 
   /**
    * Find a move that immediately captures the requested piece type
-   * Applies sacrifice rules based on request reason
+   * Extinction Pseudo-Royal Approach:
+   * Makes the requested piece type act like a "king" that must be captured.
+   * This incentivizes attacking it without making our own pieces less valuable.
    */
   private async findImmediateCapture(
     board: Board,
-    _engine: IChessEngine,
+    engine: IChessEngine,
     requestedPiece: PieceType,
     _reason: string,
-    _botName: 'Partner' | 'Bot 1' | 'Bot 2'
+    botName: 'Partner' | 'Bot 1' | 'Bot 2',
+    fenWithHoldings: string
   ): Promise<any | null> {
     const fen = board.getFen();
     const fenParts = fen.split(' ');
@@ -699,20 +856,104 @@ export class BughouseGame {
     }
 
     console.log(`[PARTNER REQUEST] Found ${requestedPiece} at: ${targetSquares.join(', ')}`);
-
-    // Get current evaluation for sacrifice rule comparisons (for future use)
-    // const currentEval = await engine.getEvaluation(12);
-    // const currentTurn = board.getCurrentTurn();
-    // const times = this.getClockTimes?.();
-
-    // Test each target square - get best move and check if it captures the piece
-    // This is a simplified approach - ideally we'd enumerate all legal moves
-    // For now, ask engine for best move after setting the target as very valuable
     
-    // Just return null for now - proper implementation needs move enumeration
-    // which requires either parsing engine's legal moves or using a move generator
-    console.log(`[PARTNER REQUEST] Immediate capture check not fully implemented yet`);
-    return null;
+    try {
+      // Build capture candidates and use searchmoves to restrict engine search
+      const currentTurn = board.getCurrentTurn();
+      const candidateMoves: string[] = [];
+      
+      for (let fromRank = 0; fromRank < 8; fromRank++) {
+        for (let fromFile = 0; fromFile < 8; fromFile++) {
+          const fromSquare = String.fromCharCode('a'.charCodeAt(0) + fromFile) + (fromRank + 1);
+          const fromPiece = this.getPieceAt(board, fromSquare);
+          if (!fromPiece) continue;
+          
+          const fromPieceColor = fromPiece === fromPiece.toUpperCase() ? 'w' : 'b';
+          if (fromPieceColor !== currentTurn) continue;
+          
+          const fromPieceType = fromPiece.toLowerCase();
+          for (const targetSquare of targetSquares) {
+            if (this.canPieceAttackSquare(fromPieceType, fromSquare, targetSquare, board)) {
+              candidateMoves.push(`${fromSquare}${targetSquare}`);
+            }
+          }
+        }
+      }
+      
+      if (candidateMoves.length === 0) {
+        console.log(`[PARTNER REQUEST] ${botName} found no capture candidates for ${requestedPiece}`);
+        this.onLog?.('stall_details', `No capture candidates found for ${requestedPiece}`, botName);
+        return null;
+      }
+      
+      console.log(`[PARTNER REQUEST] ${botName} testing ${candidateMoves.length} capture candidates via searchmoves`);
+      this.onLog?.('stall_details', `Testing ${candidateMoves.length} capture candidates via searchmoves`, botName);
+      
+      await engine.setPosition(fenWithHoldings, []);
+      const captureMove = await engine.getBestMoveWithSearchMoves(this.thinkingTimeMs, candidateMoves);
+      
+      console.log(`[ENGINE] ${botName} searchmoves capture result:`, JSON.stringify(captureMove));
+      this.onLog?.('stall_details', `Searchmoves returned: ${JSON.stringify(captureMove)}`, botName);
+      
+      if (captureMove && captureMove.to && captureMove.from !== '(none)') {
+        const targetSquaresSet = new Set(targetSquares);
+        if (targetSquaresSet.has(captureMove.to)) {
+          const targetPiece = this.getPieceAt(board, captureMove.to);
+          if (targetPiece) {
+            const capturedType = targetPiece.toLowerCase() as PieceType;
+            if (this.piecesFulfillRequest(requestedPiece, capturedType)) {
+              console.log(`[PARTNER REQUEST] ${botName} searchmoves captures ${capturedType} at ${captureMove.to}!`);
+              return captureMove;
+            }
+          }
+        }
+      }
+      
+      console.log(`[PARTNER REQUEST] ${botName} searchmoves didn't capture target`);
+      return null;
+      
+    } catch (error) {
+      console.error(`[PARTNER REQUEST] Error in searchmoves capture:`, error);
+      return null;
+    }
+  }
+  
+  /**
+   * Check if a piece can geometrically attack a square (ignoring pins and blocks)
+   */
+  private canPieceAttackSquare(pieceType: string, from: string, to: string, _board: Board): boolean {
+    const fromFile = from.charCodeAt(0) - 'a'.charCodeAt(0);
+    const fromRank = parseInt(from[1]) - 1;
+    const toFile = to.charCodeAt(0) - 'a'.charCodeAt(0);
+    const toRank = parseInt(to[1]) - 1;
+    
+    const fileDiff = Math.abs(toFile - fromFile);
+    const rankDiff = Math.abs(toRank - fromRank);
+    
+    switch (pieceType) {
+      case 'p':
+        // Pawn captures diagonally (1 square)
+        return fileDiff === 1 && rankDiff === 1;
+      case 'n':
+        // Knight moves in L-shape
+        return (fileDiff === 2 && rankDiff === 1) || (fileDiff === 1 && rankDiff === 2);
+      case 'b':
+        // Bishop moves diagonally
+        return fileDiff === rankDiff && fileDiff > 0;
+      case 'r':
+        // Rook moves in straight lines
+        return (fileDiff === 0 && rankDiff > 0) || (fileDiff > 0 && rankDiff === 0);
+      case 'q':
+        // Queen moves like rook or bishop
+        return (fileDiff === rankDiff && fileDiff > 0) || 
+               (fileDiff === 0 && rankDiff > 0) || 
+               (fileDiff > 0 && rankDiff === 0);
+      case 'k':
+        // King moves one square in any direction
+        return fileDiff <= 1 && rankDiff <= 1 && (fileDiff + rankDiff) > 0;
+      default:
+        return false;
+    }
   }
 
   /**
@@ -731,26 +972,20 @@ export class BughouseGame {
    */
   sendGoCommand(): void {
     // Send player's message first
-    if (this.onChatMessage) {
-      this.onChatMessage('You', 'Go');
-    }
+    this.sendChatMessage('You', 'Go');
     
     // Random delay 1-2 seconds for realistic response
     const delay = 1000 + Math.random() * 1000;
     setTimeout(() => {
       if (this.stallingState.partner) {
         // Partner is stalling - force exit
-        if (this.onChatMessage) {
-          this.onChatMessage('Partner', 'I go.');
-        }
+        this.sendChatMessage('Partner', 'I go.');
         delete this.stallingState.partner;
         this.clearPartnerRequest('Partner'); // Clear partner's request to their partner
         this.partnerForcedToGo = true; // Prevent immediate re-stall
       } else {
         // Partner is not stalling
-        if (this.onChatMessage) {
-          this.onChatMessage('Partner', '?');
-        }
+        this.sendChatMessage('Partner', '?');
       }
     }, delay);
   }
@@ -760,23 +995,17 @@ export class BughouseGame {
    */
   sendSitCommand(): void {
     // Send player's message first
-    if (this.onChatMessage) {
-      this.onChatMessage('You', 'Sit');
-    }
+    this.sendChatMessage('You', 'Sit');
     
     // Random delay 1-2 seconds for realistic response
     const delay = 1000 + Math.random() * 1000;
     setTimeout(() => {
       if (this.stallingState.partner) {
         // Partner is already stalling
-        if (this.onChatMessage) {
-          this.onChatMessage('Partner', 'I am.');
-        }
+        this.sendChatMessage('Partner', 'I am.');
       } else {
         // Partner is not stalling - force stall
-        if (this.onChatMessage) {
-          this.onChatMessage('Partner', 'I sit.');
-        }
+        this.sendChatMessage('Partner', 'I sit.');
         // Enter player-induced stall (use dummy piece)
         this.stallingState.partner = {
           piece: 'q',
@@ -921,6 +1150,7 @@ export class BughouseGame {
       const hypotheticalAdjusted = hypScore * hypotheticalMultiplier;
       
       console.log(`[STALL] ${botName} testing ${pieceType}: ${hypotheticalEval.isMate ? `mate ${hypotheticalEval.score}` : `${hypotheticalEval.score}cp`} (raw: ${hypotheticalEval.isMate ? `mate ${hypotheticalEval.score}` : `${hypotheticalEval.score}cp`})${hypotheticalEval.isMate && Math.abs(hypotheticalEval.score) > LONG_MATE_THRESHOLD ? ' [treated as +' + LONG_MATE_CP_VALUE + 'cp]' : ''}`);
+      this.onLog?.('stall_details', `Testing ${pieceType}: ${hypotheticalEval.isMate ? `mate ${hypotheticalEval.score}` : `${hypotheticalEval.score}cp`} (raw: ${hypotheticalEval.isMate ? `mate ${hypotheticalEval.score}` : `${hypotheticalEval.score}cp`})`, botName);
       
       // Scenario 1: Forces mate (current NOT mating, with piece IS mating with positive mate score <= 5)
       const forcesMate = !currentIsMate && hypIsMate && hypotheticalAdjusted > 0;
@@ -969,11 +1199,11 @@ export class BughouseGame {
    */
   private getStallProbability(piece: PieceType, scenario: string): number {
     const probabilities: Record<PieceType, Record<string, number>> = {
-      'p': { forces_mate: 0.95, saves_from_mate: 0.90, lost_to_winning: 0.60 },
-      'n': { forces_mate: 0.75, saves_from_mate: 0.70, lost_to_winning: 0.50 },
-      'b': { forces_mate: 0.75, saves_from_mate: 0.70, lost_to_winning: 0.50 },
-      'r': { forces_mate: 0.50, saves_from_mate: 0.33, lost_to_winning: 0.0 },
-      'q': { forces_mate: 0.50, saves_from_mate: 0.25, lost_to_winning: 0.0 },
+      'p': { forces_mate: 0.98, saves_from_mate: 0.90, lost_to_winning: 0.60 },
+      'n': { forces_mate: 0.95, saves_from_mate: 0.70, lost_to_winning: 0.50 },
+      'b': { forces_mate: 0.95, saves_from_mate: 0.70, lost_to_winning: 0.50 },
+      'r': { forces_mate: 0.95, saves_from_mate: 0.33, lost_to_winning: 0.0 },
+      'q': { forces_mate: 0.95, saves_from_mate: 0.25, lost_to_winning: 0.0 },
     };
     
     return probabilities[piece]?.[scenario] || 0;
@@ -1104,9 +1334,7 @@ export class BughouseGame {
         if (botTime <= diagonalTime) {
           console.log(`[STALL] ${botName} now down on time - abandoning stall and resuming play`);
           
-          if (this.onChatMessage) {
-            this.onChatMessage(botName, 'I go.');
-          }
+          this.sendChatMessage(botName, 'I go.');
           
           // Determine which board and engine this bot uses
           let board: Board;
@@ -1163,40 +1391,15 @@ export class BughouseGame {
   ): Promise<any | null> {
     console.log(`[GHOST] ${botName} creating ghost position with royal ${requestedPiece}`);
     
-    // Map piece type to character for variant config
-    const pieceChars: Record<PieceType, string> = {
-      'p': 'p',
-      'n': 'n', 
-      'b': 'b',
-      'r': 'r',
-      'q': 'q'
-    };
-    
-    const royalPieceChar = pieceChars[requestedPiece];
-    if (!royalPieceChar) {
-      console.error(`[GHOST] Unknown piece type: ${requestedPiece}`);
-      return null;
-    }
-    
     try {
-      // Configure variant where requested piece is pseudo-royal
-      // extinctionPseudoRoyal makes the piece subject to "check" like a king
-      // extinctionValue = -VALUE_MATE means losing the piece is checkmate
-      const ghostVariantConfig = `
-[ghost_royal_${requestedPiece}:bughouse]
-extinctionPseudoRoyal = true
-extinctionValue = loss
-extinctionPieceTypes = ${royalPieceChar}
-`;
+      // Use pre-configured variant from engines/variants.ini
+      // VariantPath must be a file path, not inline config.
+      const variantPath = 'engines/variants.ini';
+      console.log(`[GHOST] Using VariantPath file: ${variantPath}`);
       
-      console.log(`[GHOST] Variant config:\n${ghostVariantConfig}`);
-      
-      // Load custom variant configuration
-      // Note: This may not work if engine doesn't support runtime variant loading
-      // We may need to use UCI_Variant with a pre-configured variant instead
       await engine.setOptions({ 
         UCI_Variant: `ghost_royal_${requestedPiece}`,
-        VariantPath: ghostVariantConfig // Try inline config
+        VariantPath: variantPath
       });
       
       // Set ghost position with same FEN
@@ -1238,29 +1441,14 @@ extinctionPieceTypes = ${royalPieceChar}
   ): Promise<any | null> {
     console.log(`[HIGH-VALUE] ${botName} creating ghost position with high-value ${requestedPiece}`);
     
-    const pieceChars: Record<PieceType, string> = {
-      'p': 'p', 'n': 'n', 'b': 'b', 'r': 'r', 'q': 'q'
-    };
-    
-    const pieceChar = pieceChars[requestedPiece];
-    if (!pieceChar) {
-      console.error(`[HIGH-VALUE] Unknown piece type: ${requestedPiece}`);
-      return null;
-    }
-    
     try {
-      // Create variant where requested piece has extreme value
-      // customPieceValue[p] = 99999 makes pawns worth 99999 centipawns
-      const ghostVariantConfig = `
-[ghost_highvalue_${requestedPiece}:bughouse]
-customPieceValue${pieceChar.toUpperCase()} = 99999
-`;
-      
-      console.log(`[HIGH-VALUE] Variant config:\n${ghostVariantConfig}`);
+      // Use pre-configured variant from engines/variants.ini
+      const variantPath = 'engines/variants.ini';
+      console.log(`[HIGH-VALUE] Using VariantPath file: ${variantPath}`);
       
       await engine.setOptions({ 
         UCI_Variant: `ghost_highvalue_${requestedPiece}`,
-        VariantPath: ghostVariantConfig
+        VariantPath: variantPath
       });
       
       await engine.setPosition(currentFen, []);
@@ -1526,9 +1714,7 @@ customPieceValue${pieceChar.toUpperCase()} = 99999
         // Handle mated scenario
         if (scenario === 'mated') {
           console.log(`[STALL] ${botName} scenario is 'mated' - getting mated in 1 with no escape`);
-          if (this.onChatMessage) {
-            this.onChatMessage(botName, 'I am mated');
-          }
+          this.sendChatMessage(botName, 'I am mated');
           if (shouldStall) {
             console.log(`[STALL] ${botName} STARTS stalling for ${piece} - NOT MOVING`);
             this.stallingState[this.botNameToKey(botName)] = { piece, reason: scenario };
@@ -1562,6 +1748,7 @@ customPieceValue${pieceChar.toUpperCase()} = 99999
           // We're stalling - send scenario-specific message
           console.log(`[STALL] ${botName} STARTS stalling for ${piece} - NOT MOVING`);
           this.stallingState[this.botNameToKey(botName)] = { piece, reason: scenario };
+          this.onLog?.('stalls', `ENTERED STALL (REASON: ${scenario} - wants ${piece})`, botName);
           
           // Set partner request so partner tries to capture this piece
           this.setPartnerRequest(botName, piece, scenario);
@@ -1569,9 +1756,7 @@ customPieceValue${pieceChar.toUpperCase()} = 99999
           // Reset down time message flag since we're back to stalling (up on time)
           this.downTimeMessageSent[this.botNameToKey(botName)] = false;
           
-          if (this.onChatMessage) {
-            this.onChatMessage(botName, requestMessage);
-          }
+          this.sendChatMessage(botName, requestMessage);
           
           // Stalling means NOT MOVING - just return and let the clock run
           return;
@@ -1580,44 +1765,76 @@ customPieceValue${pieceChar.toUpperCase()} = 99999
           const times = this.getClockTimes?.();
           const upOnTime = times ? this.getBotAndDiagonalTimes(botName, times).botTime > this.getBotAndDiagonalTimes(botName, times).diagonalTime : false;
           
-          if (this.onChatMessage) {
-            if (upOnTime) {
-              // Up on time but probability roll failed
-              // Reset down time flag since we're up on time
-              this.downTimeMessageSent[this.botNameToKey(botName)] = false;
-              
-              this.onChatMessage(botName, requestMessage);
+          if (upOnTime) {
+            // Up on time but probability roll failed
+            // Reset down time flag since we're up on time
+            this.downTimeMessageSent[this.botNameToKey(botName)] = false;
+            
+            this.sendChatMessage(botName, requestMessage);
+            setTimeout(() => {
+              this.sendChatMessage(botName, `Actually, I'll go for now. Not worth sitting.`);
+            }, 1500);
+          } else {
+            // Not up on time - only send message if we haven't already
+            const botKey = this.botNameToKey(botName);
+            if (!this.downTimeMessageSent[botKey]) {
+              this.sendChatMessage(botName, requestMessage);
               setTimeout(() => {
-                if (this.onChatMessage) {
-                  this.onChatMessage(botName, `Actually, I'll go for now. Not worth sitting.`);
-                }
+                this.sendChatMessage(botName, `nvm we are down time. I go.`);
               }, 1500);
-            } else {
-              // Not up on time - only send message if we haven't already
-              const botKey = this.botNameToKey(botName);
-              if (!this.downTimeMessageSent[botKey]) {
-                this.onChatMessage(botName, requestMessage);
-                setTimeout(() => {
-                  if (this.onChatMessage) {
-                    this.onChatMessage(botName, `nvm we are down time. I go.`);
-                  }
-                }, 1500);
-                // Mark that we've sent the down time message
-                this.downTimeMessageSent[botKey] = true;
-              }
-              // If already sent, don't send any message
+              // Mark that we've sent the down time message
+              this.downTimeMessageSent[botKey] = true;
             }
+            // If already sent, don't send any message
           }
         }
       }
 
       // No stalling needed - get and play best move (considering partner requests)
       const move = await this.getBestMoveWithPartnerRequest(board, engine, botName);
+      console.log(`[MOVE] ${botName} selected move:`, JSON.stringify(move));
       
-      await this.executeMoveOnBoard(board, engine, move);
+      const fulfilledBots = await this.executeMoveOnBoard(board, engine, move);
       
-      // Bots with fulfilled requests will move on their next turn (stalling state cleared)
-      // No need to immediately resume - just let them move naturally
+      // Update piece pools BEFORE fulfilled bots move so they have the pieces
+      if (fulfilledBots.length > 0) {
+        this.updatePiecePools();
+      }
+      
+      // Immediately execute moves for bots whose stalling was fulfilled
+      for (const { botName: fulfilledBotName, board: fulfilledBoard, engine: fulfilledEngine } of fulfilledBots) {
+        if (this.status !== GameStatus.IN_PROGRESS) break;
+        console.log(`[STALL] ${fulfilledBotName} moving immediately after stall fulfillment`);
+        
+        // Log pool state before getting move
+        const fulfilledBoardWhitePool = fulfilledBoard.getWhitePiecePool();
+        const fulfilledBoardBlackPool = fulfilledBoard.getBlackPiecePool();
+        console.log(`[POOL] ${fulfilledBotName} white pool:`, Object.fromEntries(fulfilledBoardWhitePool.getAllPieces()));
+        console.log(`[POOL] ${fulfilledBotName} black pool:`, Object.fromEntries(fulfilledBoardBlackPool.getAllPieces()));
+        const whitePoolContents = Object.fromEntries(fulfilledBoardWhitePool.getAllPieces());
+        const blackPoolContents = Object.fromEntries(fulfilledBoardBlackPool.getAllPieces());
+        this.onLog?.('stall_details', `Pool state - White: ${JSON.stringify(whitePoolContents)}, Black: ${JSON.stringify(blackPoolContents)}`, fulfilledBotName);
+
+        // Log FEN + holdings right before selecting the fulfilled move (same stream as pool state)
+        const fulfilledBaseFen = fulfilledBoard.getFen();
+        const fulfilledFenParts = fulfilledBaseFen.split(' ');
+        const fulfilledHoldings = this.buildHoldingsString(fulfilledBoardWhitePool, true) +
+          this.buildHoldingsString(fulfilledBoardBlackPool, false);
+        const fulfilledFenWithHoldings = fulfilledHoldings
+          ? `${fulfilledFenParts[0]}[${fulfilledHoldings}] ${fulfilledFenParts.slice(1).join(' ')}`
+          : fulfilledBaseFen;
+        console.log(`[POSITION] ${fulfilledBotName} fulfilled base FEN: ${fulfilledBaseFen}`);
+        console.log(`[POSITION] ${fulfilledBotName} fulfilled holdings: ${fulfilledHoldings || '(none)'}`);
+        console.log(`[POSITION] ${fulfilledBotName} fulfilled FEN+holdings: ${fulfilledFenWithHoldings}`);
+        this.onLog?.('stall_details', `Fulfilled base FEN: ${fulfilledBaseFen}`, fulfilledBotName);
+        this.onLog?.('stall_details', `Fulfilled holdings: ${fulfilledHoldings || '(none)'}`, fulfilledBotName);
+        this.onLog?.('stall_details', `Fulfilled FEN+holdings: ${fulfilledFenWithHoldings}`, fulfilledBotName);
+        
+        const fulfilledMove = await this.getBestMoveWithPartnerRequest(fulfilledBoard, fulfilledEngine, fulfilledBotName);
+        console.log(`[MOVE] ${fulfilledBotName} fulfilled move:`, JSON.stringify(fulfilledMove));
+        this.onLog?.('stall_details', `Fulfilled move selected: ${JSON.stringify(fulfilledMove)}`, fulfilledBotName);
+        await this.executeMoveOnBoard(fulfilledBoard, fulfilledEngine, fulfilledMove);
+      }
     } catch (error) {
       console.error('Engine move failed:', error);
     }
@@ -1628,6 +1845,12 @@ customPieceValue${pieceChar.toUpperCase()} = 99999
    * Returns array of bots whose stalling was fulfilled and should move now
    */
   private async executeMoveOnBoard(board: Board, engine: IChessEngine, move: any): Promise<Array<{ botName: 'Bot 1' | 'Partner' | 'Bot 2', board: Board, engine: IChessEngine }>> {
+    // Check if game is still in progress before executing
+    if (this.status !== GameStatus.IN_PROGRESS) {
+      console.log('[MOVE] Skipping move - game is over');
+      return [];
+    }
+    
     const fulfilledBots: Array<{ botName: 'Bot 1' | 'Partner' | 'Bot 2', board: Board, engine: IChessEngine }> = [];
     // If it's a drop move, remove the piece from the pool first
     if (move.drop) {
@@ -1667,22 +1890,20 @@ customPieceValue${pieceChar.toUpperCase()} = 99999
         if (requestedPiece && this.piecesFulfillRequest(requestedPiece, capturedType)) {
           const stallingBotName = this.botKeyToName(botKey);
           
-          // Only thank if the piece was captured by someone on the OTHER board
-          // Bot 1 (player board) should thank Bot 2 or Partner (partner board)
-          // Bot 2 or Partner (partner board) should thank Bot 1 (player board)
-          const stallingOnPlayerBoard = stallingBotName === 'Bot 1';
-          const capturedOnPlayerBoard = board === this.playerBoard;
+          // Only thank if the piece was captured by the stalling bot's actual PARTNER
+          // Bot 1's partner is Bot 2, Bot 2's partner is Bot 1, Partner's partner is Player
+          const expectedPartner = this.getPartnerBotName(stallingBotName);
           
-          if (stallingOnPlayerBoard !== capturedOnPlayerBoard) {
-            // Different boards - the capture helps!
+          // Check if the capturing bot is the expected partner
+          if (expectedPartner === capturingBotName) {
+            // Correct partner captured the piece!
             const fulfillmentMsg = capturedType === requestedPiece 
               ? `exact match ${capturedType}`
               : `${capturedType} fulfills ${requestedPiece} request`;
             console.log(`[STALL] ${stallingBotName} received ${fulfillmentMsg} from ${capturingBotName} - stall fulfilled!`);
+            this.onLog?.('stalls', `EXITED STALL (REASON: ${capturingBotName} captured ${capturedType})`, stallingBotName);
             
-            if (this.onChatMessage) {
-              this.onChatMessage(stallingBotName, 'Thanks :)');
-            }
+            this.sendChatMessage(stallingBotName, 'Thanks :)');
             
             delete this.stallingState[botKey];
             this.clearPartnerRequest(stallingBotName); // Clear this bot's request to their partner
@@ -1715,8 +1936,8 @@ customPieceValue${pieceChar.toUpperCase()} = 99999
               fulfilledBots.push({ botName: stallingBotName, board: botBoard, engine: botEngine });
             }
           } else {
-            // Same board - bot captured it themselves, don't thank
-            console.log(`[STALL] ${stallingBotName} captured ${capturedType} themselves on same board - ignoring`);
+            // Wrong partner captured the piece - ignore
+            console.log(`[STALL] ${stallingBotName} wanted ${requestedPiece}, but ${capturingBotName} captured ${capturedType} (not their partner) - ignoring`);
           }
         }
       }
@@ -1732,6 +1953,76 @@ customPieceValue${pieceChar.toUpperCase()} = 99999
       drop: move.drop ? move.drop as PieceType : undefined,
       dropColor: move.drop ? this.getDropColor(board, move.drop) : undefined,
     });
+
+    // Get evaluation after the move (from White's perspective)
+    let evalString = '';
+    try {
+      const baseFen = board.getFen();
+      const fenParts = baseFen.split(' ');
+      const whitePool = board.getWhitePiecePool();
+      const blackPool = board.getBlackPiecePool();
+      const whiteHoldings = this.buildHoldingsString(whitePool, true);
+      const blackHoldings = this.buildHoldingsString(blackPool, false);
+      const holdings = whiteHoldings + blackHoldings;
+      const fenWithHoldings = holdings 
+        ? `${fenParts[0]}[${holdings}] ${fenParts.slice(1).join(' ')}`
+        : baseFen;
+
+      if (botName === 'Bot 1') {
+        const whitePoolContents = Object.fromEntries(whitePool.getAllPieces());
+        const blackPoolContents = Object.fromEntries(blackPool.getAllPieces());
+        console.log(`[POSITION] ${botName} move base FEN: ${baseFen}`);
+        console.log(`[POSITION] ${botName} move holdings: ${holdings || '(none)'}`);
+        console.log(`[POSITION] ${botName} move FEN+holdings: ${fenWithHoldings}`);
+        console.log(`[POSITION] ${botName} pool - White:`, whitePoolContents, 'Black:', blackPoolContents);
+        this.onLog?.('game_events', `Bot 1 base FEN: ${baseFen}`, botName);
+        this.onLog?.('game_events', `Bot 1 holdings: ${holdings || '(none)'}`, botName);
+        this.onLog?.('game_events', `Bot 1 FEN+holdings: ${fenWithHoldings}`, botName);
+        this.onLog?.('game_events', `Bot 1 pool - White: ${JSON.stringify(whitePoolContents)}, Black: ${JSON.stringify(blackPoolContents)}`, botName);
+      }
+      
+      await engine.setPosition(fenWithHoldings, []);
+      const evaluation = await engine.getEvaluation(12);
+      
+      if (evaluation.isMate) {
+        // Mate scores are from side-to-move perspective
+        // Positive = side to move is mating, Negative = side to move is getting mated
+        const currentTurn = board.getCurrentTurn();
+        if (currentTurn === 'w') {
+          // White to move: positive mate = White mating, negative = White getting mated
+          evalString = evaluation.score > 0 
+            ? `[White mates in ${evaluation.score}]` 
+            : `[Black mates in ${Math.abs(evaluation.score)}]`;
+        } else {
+          // Black to move: positive mate = Black mating, negative = Black getting mated
+          evalString = evaluation.score > 0 
+            ? `[Black mates in ${evaluation.score}]` 
+            : `[White mates in ${Math.abs(evaluation.score)}]`;
+        }
+      } else {
+        // Centipawn scores are from White's perspective
+        const cpScore = (evaluation.score / 100).toFixed(2);
+        evalString = evaluation.score >= 0 
+          ? `[+${cpScore}]` 
+          : `[${cpScore}]`;
+      }
+    } catch (error) {
+      console.error('[EVAL] Error getting evaluation:', error);
+      evalString = '[eval error]';
+    }
+
+    // Log the move with evaluation
+    const botName = this.identifyBot(board, engine);
+    const moveNotation = move.drop 
+      ? `${move.drop.toUpperCase()}@${move.to}` 
+      : move.promotion 
+        ? `${move.from}${move.to}=${move.promotion}` 
+        : `${move.from}${move.to}`;
+    this.onLog?.('moves', `${moveNotation} ${evalString}`, botName);
+    
+    if (captured) {
+      this.onLog?.('captures', `Captured ${captured} at ${move.to}`, botName);
+    }
 
     if (board === this.partnerBoard) {
       console.log(`[PARTNER] FEN AFTER MOVE:`, board.getFen());
@@ -1773,13 +2064,27 @@ customPieceValue${pieceChar.toUpperCase()} = 99999
         // Check if any bot should abandon stalling due to time and resume
         const botsToResume = this.checkTimeBasedStallAbandonment();
         for (const { botName, board, engine } of botsToResume) {
+          if (this.status !== GameStatus.IN_PROGRESS) break;
           console.log(`[STALL] ${botName} resuming immediately after time abandonment`);
           // Set position before getting move
           await engine.setPosition(board.getFen(), []);
           // Directly make a move without re-evaluating stalling logic
           const move = await engine.getBestMove(this.thinkingTimeMs);
-          await this.executeMoveOnBoard(board, engine, move);
+          const fulfilled = await this.executeMoveOnBoard(board, engine, move);
+          // Update pools BEFORE fulfilled bots move
+          if (fulfilled.length > 0) {
+            this.updatePiecePools();
+          }
+          // Handle any fulfilled bots from this move
+          for (const { botName: fbn, board: fb, engine: fe } of fulfilled) {
+            if (this.status !== GameStatus.IN_PROGRESS) break;
+            const fm = await this.getBestMoveWithPartnerRequest(fb, fe, fbn);
+            await this.executeMoveOnBoard(fb, fe, fm);
+          }
         }
+        
+        // Check game status before making partner move
+        if (this.status !== GameStatus.IN_PROGRESS) break;
         
         await this.makeEngineMove(this.partnerBoard, engine);
         

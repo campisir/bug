@@ -20,6 +20,7 @@ export interface IChessEngine {
   initialize(): Promise<void>;
   setPosition(fen: string, moves?: string[]): Promise<void>;
   getBestMove(timeMs: number): Promise<EngineMove>;
+  getBestMoveWithSearchMoves(timeMs: number, searchMoves: string[]): Promise<EngineMove>;
   getEvaluation(depth: number): Promise<EngineInfo>;
   startAnalysis(callback: (info: EngineInfo) => void): void;
   stopAnalysis(): Promise<void>;
@@ -88,6 +89,27 @@ export class FairyStockfishEngine implements IChessEngine {
       console.log(`[UCI] Requesting best move (${timeMs}ms)`);
       this.sendCommand(`go movetime ${timeMs}`);
       
+      this.waitForResponse('bestmove', (response) => {
+        const match = response.match(/bestmove\s+(\S+)/);
+        if (match) {
+          const moveStr = match[1];
+          const parsedMove = this.parseMove(moveStr);
+          console.log('[UCI] Best move received:', moveStr, '→', parsedMove);
+          resolve(parsedMove);
+        } else {
+          reject(new Error('Failed to parse best move'));
+        }
+      });
+    });
+  }
+
+  async getBestMoveWithSearchMoves(timeMs: number, searchMoves: string[]): Promise<EngineMove> {
+    return new Promise((resolve, reject) => {
+      const moves = searchMoves.filter(Boolean);
+      const searchMovesPart = moves.length > 0 ? ` searchmoves ${moves.join(' ')}` : '';
+      console.log(`[UCI] Requesting best move (${timeMs}ms) with searchmoves:`, moves);
+      this.sendCommand(`go movetime ${timeMs}${searchMovesPart}`);
+
       this.waitForResponse('bestmove', (response) => {
         const match = response.match(/bestmove\s+(\S+)/);
         if (match) {

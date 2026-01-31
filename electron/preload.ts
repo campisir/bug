@@ -28,6 +28,7 @@ export interface ElectronAPI {
     initialize: (engineId: string, enginePath: string) => Promise<void>;
     setPosition: (engineId: string, fen: string, moves?: string[]) => Promise<void>;
     getBestMove: (engineId: string, timeMs: number) => Promise<EngineMove>;
+    getBestMoveWithSearchMoves: (engineId: string, timeMs: number, searchMoves: string[]) => Promise<EngineMove>;
     getEvaluation: (engineId: string, depth: number) => Promise<EngineInfo>;
     setOptions: (engineId: string, options: Record<string, string | number>) => Promise<void>;
     shutdown: (engineId: string) => Promise<void>;
@@ -45,6 +46,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     
     getBestMove: (engineId: string, timeMs: number) => 
       ipcRenderer.invoke('engine:getBestMove', engineId, timeMs),
+
+    getBestMoveWithSearchMoves: (engineId: string, timeMs: number, searchMoves: string[]) =>
+      ipcRenderer.invoke('engine:getBestMoveWithSearchMoves', engineId, timeMs, searchMoves),
     
     getEvaluation: (engineId: string, depth: number) =>
       ipcRenderer.invoke('engine:getEvaluation', engineId, depth),
