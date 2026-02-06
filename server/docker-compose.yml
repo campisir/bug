@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: bughouse-db
+    environment:
+      POSTGRES_DB: bughouse
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-development_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Bughouse Server
+  server:
+    build: .
+    container_name: bughouse-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: bughouse
+      DB_USER: postgres
+      DB_PASSWORD: ${DB_PASSWORD:-development_password}
+      ENGINE_PATH: /usr/local/bin/fairy-stockfish
+      MAX_ENGINES: 20
+      ALLOWED_ORIGINS: http://localhost:5173,https://bughouse.ai
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
