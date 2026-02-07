@@ -70,6 +70,21 @@ export function GameContainer() {
       playerFen: 'rnbqkb1r/pppp1ppp/4pn2/8/8/4P3/PPPPKPPP/RNBQ1BNR w KQkq - 0 1',
       partnerFen: 'rnb1kbnr/ppppp1pp/5p1q/8/8/5QN1/PPPPPPPP/RNB1KB1R w KQkq - 0 1',
     },
+    dontForkForQueen: {
+      name: 'Don\'t Fork for Queen',
+      playerFen: 'rnbqkb1r/pppp1ppp/4pn2/8/8/4P3/PPPPKPPP/RNBQ1BNR w KQkq - 0 1',
+      partnerFen: 'rnb1kbnr/ppppp1pp/5p1q/8/8/5Q2/PPPPPPPP/RNB1KBNR w KQkq - 0 1',
+    },
+    pinForQueen: {
+      name: 'Pin for Queen',
+      playerFen: 'rnbqkb1r/pppp1ppp/4pn2/8/8/4P3/PPPPKPPP/RNBQ1BNR w KQkq - 0 1',
+      partnerFen: 'rnb1kbnr/ppppp1pp/5pq1/8/8/5QN1/PPPPPPPP/RNB1KB1R w KQkq - 0 1',
+    },
+    forceQueenInThree: {
+      name: 'Force Queen in 3',
+      playerFen: 'rnbqkb1r/pppp1ppp/4pn2/8/8/4P3/PPPPKPPP/RNBQ1BNR w KQkq - 0 1',
+      partnerFen: '2bnkbn1/ppprpq1p/1B1p1p2/8/8/3N1Q2/PPPPPPPP/R3KB1R w KQkq - 0 1',
+    },
   };
 
   useEffect(() => {

@@ -647,6 +647,13 @@ export class BughouseGame {
     const partnerName = this.getPartnerBotName(botName);
     if (!partnerName) return;
 
+    // Special stall reasons shouldn't trigger partner requests or "I will try"
+    if (reason === 'mated' || reason === 'player_command') {
+      console.log(`[PARTNER REQUEST] ${botName} stall reason '${reason}' - not requesting partner`);
+      this.onLog?.('requests', `Skipped request to ${partnerName} (${reason})`, botName);
+      return;
+    }
+
     console.log(`[PARTNER REQUEST] ${botName} requests ${piece} from ${partnerName} (${reason})`);
     this.onLog?.('requests', `Sent request to ${partnerName} for ${piece} (${reason})`, botName);
 
@@ -757,7 +764,7 @@ export class BughouseGame {
       console.log(`[PARTNER REQUEST] ${botName} found immediate capture of ${request.piece}: ${capturingMove.from}${capturingMove.to}`);
       return capturingMove;
     }
-    
+
     // Get normal best move as fallback for Step 2
     await engine.setPosition(fenWithHoldings, []);
     const normalMove = await engine.getBestMove(this.thinkingTimeMs);
@@ -889,11 +896,11 @@ export class BughouseGame {
       console.log(`[PARTNER REQUEST] ${botName} testing ${candidateMoves.length} capture candidates via searchmoves`);
       this.onLog?.('stall_details', `Testing ${candidateMoves.length} capture candidates via searchmoves`, botName);
       
-      await engine.setPosition(fenWithHoldings, []);
+        await engine.setPosition(fenWithHoldings, []);
       const captureMove = await engine.getBestMoveWithSearchMoves(this.thinkingTimeMs, candidateMoves);
-      
-      console.log(`[ENGINE] ${botName} searchmoves capture result:`, JSON.stringify(captureMove));
-      this.onLog?.('stall_details', `Searchmoves returned: ${JSON.stringify(captureMove)}`, botName);
+        
+        console.log(`[ENGINE] ${botName} searchmoves capture result:`, JSON.stringify(captureMove));
+        this.onLog?.('stall_details', `Searchmoves returned: ${JSON.stringify(captureMove)}`, botName);
       
       if (captureMove && captureMove.to && captureMove.from !== '(none)') {
         const targetSquaresSet = new Set(targetSquares);
@@ -1889,6 +1896,14 @@ export class BughouseGame {
         const requestedPiece = this.stallingState[botKey]?.piece;
         if (requestedPiece && this.piecesFulfillRequest(requestedPiece, capturedType)) {
           const stallingBotName = this.botKeyToName(botKey);
+          const stallReason = this.stallingState[botKey]?.reason;
+          const playerInduced = this.stallingState[botKey]?.playerInduced;
+
+          // Ignore fulfillment for special stall reasons
+          if (stallReason === 'mated' || stallReason === 'player_command' || playerInduced) {
+            console.log(`[STALL] ${stallingBotName} stall reason '${stallReason}' - ignoring capture fulfillment`);
+            continue;
+          }
           
           // Only thank if the piece was captured by the stalling bot's actual PARTNER
           // Bot 1's partner is Bot 2, Bot 2's partner is Bot 1, Partner's partner is Player
@@ -1954,6 +1969,9 @@ export class BughouseGame {
       dropColor: move.drop ? this.getDropColor(board, move.drop) : undefined,
     });
 
+    // Identify bot early for logging
+    const botName = this.identifyBot(board, engine);
+
     // Get evaluation after the move (from White's perspective)
     let evalString = '';
     try {
@@ -2012,7 +2030,6 @@ export class BughouseGame {
     }
 
     // Log the move with evaluation
-    const botName = this.identifyBot(board, engine);
     const moveNotation = move.drop 
       ? `${move.drop.toUpperCase()}@${move.to}` 
       : move.promotion 
