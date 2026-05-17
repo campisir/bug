@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Chessground } from 'chessground';
 import type { Api } from 'chessground/api';
 import type { Config } from 'chessground/config';
+import type { Key } from 'chessground/types';
 import { Chess } from 'chess.js';
 import 'chessground/assets/chessground.base.css';
 import 'chessground/assets/chessground.brown.css';
@@ -32,7 +33,7 @@ export function ChessBoard({
   onSquareClick,
   movable = true,
   lastMove = null,
-  debug = false,
+  debug: _debug = false,
 }: ChessBoardProps) {
   const boardRef = useRef<HTMLDivElement>(null);
   const chessgroundRef = useRef<Api | null>(null);
@@ -152,7 +153,7 @@ export function ChessBoard({
           enabled: movable,
           showGhost: true,
         },
-        lastMove: lastMove || undefined,
+        lastMove: lastMove ? lastMove as Key[] : undefined,
       });
       
       // Try to play premove if it's now our turn and we have one set

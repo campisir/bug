@@ -15,31 +15,40 @@ export class ElectronIPCEngine implements IChessEngine {
     this.enginePath = enginePath;
   }
 
+  private get api() {
+    if (!window.electronAPI?.engine) {
+      throw new Error(
+        'window.electronAPI is not available. Ensure the app is running inside Electron with the preload script loaded.'
+      );
+    }
+    return window.electronAPI.engine;
+  }
+
   async initialize(): Promise<void> {
-    await window.electronAPI.engine.initialize(this.engineId, this.enginePath);
+    await this.api.initialize(this.engineId, this.enginePath);
   }
 
   async setPosition(fen: string, moves?: string[]): Promise<void> {
-    await window.electronAPI.engine.setPosition(this.engineId, fen, moves);
+    await this.api.setPosition(this.engineId, fen, moves);
   }
 
   async getBestMove(timeMs: number): Promise<EngineMove> {
-    return await window.electronAPI.engine.getBestMove(this.engineId, timeMs);
+    return await this.api.getBestMove(this.engineId, timeMs);
   }
 
   async getBestMoveWithSearchMoves(timeMs: number, searchMoves: string[]): Promise<EngineMove> {
     try {
-      return await window.electronAPI.engine.getBestMoveWithSearchMoves(this.engineId, timeMs, searchMoves);
+      return await this.api.getBestMoveWithSearchMoves(this.engineId, timeMs, searchMoves);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn('[IPC] getBestMoveWithSearchMoves failed:', message);
       console.warn('[IPC] Falling back to getBestMove. Restart Electron after rebuild to register the handler.');
-      return await window.electronAPI.engine.getBestMove(this.engineId, timeMs);
+      return await this.api.getBestMove(this.engineId, timeMs);
     }
   }
 
   async getEvaluation(depth: number): Promise<EngineInfo> {
-    return await window.electronAPI.engine.getEvaluation(this.engineId, depth);
+    return await this.api.getEvaluation(this.engineId, depth);
   }
 
   startAnalysis(_callback: (info: EngineInfo) => void): void {
@@ -56,7 +65,7 @@ export class ElectronIPCEngine implements IChessEngine {
   }
 
   async shutdown(): Promise<void> {
-    await window.electronAPI.engine.shutdown(this.engineId);
+    await this.api.shutdown(this.engineId);
   }
 
   async isReady(): Promise<boolean> {
@@ -65,6 +74,6 @@ export class ElectronIPCEngine implements IChessEngine {
   }
 
   async setOptions(options: Record<string, string | number>): Promise<void> {
-    await window.electronAPI.engine.setOptions(this.engineId, options);
+    await this.api.setOptions(this.engineId, options);
   }
 }

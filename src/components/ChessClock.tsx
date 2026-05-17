@@ -10,7 +10,7 @@ interface ChessClockProps {
  * 
  * Displays the chess clock for both players
  */
-export function ChessClock({ whiteTime, blackTime, currentTurn, playerColor }: ChessClockProps) {
+export function ChessClock({ whiteTime, blackTime, currentTurn, playerColor: _playerColor }: ChessClockProps) {
   const formatTime = (ms: number): string => {
     const totalSeconds = Math.floor(ms / 1000);
     const minutes = Math.floor(totalSeconds / 60);

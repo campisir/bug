@@ -1,0 +1,86 @@
+name: Deploy to bughouse.ai
+
+on:
+  push:
+    branches: [bughouse.ai]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Frontend ──────────────────────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend (web)
+        run: npm run build
+        env:
+          VITE_API_URL: https://bughouse.ai
+
+      # ── Server ────────────────────────────────────────────────────────────
+      - name: Install server dependencies
+        working-directory: server
+        run: npm ci --production
+
+      - name: Build server
+        working-directory: server
+        run: npm run build
+
+      # ── Deploy to EC2 ─────────────────────────────────────────────────────
+      - name: Write SSH key
+        run: |
+          echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+
+      - name: Upload frontend dist
+        run: |
+          rsync -avz --delete \
+            -e "ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no" \
+            dist/ \
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/bughouse/dist/
+
+      - name: Upload server dist
+        run: |
+          rsync -avz --delete \
+            -e "ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no" \
+            server/dist/ \
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/bughouse/server/dist/
+
+      - name: Upload server package files
+        run: |
+          rsync -avz \
+            -e "ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no" \
+            server/package.json server/package-lock.json \
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/bughouse/server/
+
+      - name: Install production dependencies & restart
+        run: |
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} '
+              set -e
+              cd /var/www/bughouse/server
+              npm ci --production --ignore-scripts
+              pm2 restart bughouse-server || pm2 start dist/index.js --name bughouse-server
+              pm2 save
+            '
+
+      - name: Verify health check
+        run: |
+          sleep 5
+          curl --fail https://bughouse.ai/health || exit 1
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f /tmp/deploy_key

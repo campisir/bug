@@ -121,6 +121,28 @@ export class FairyStockfishEngine implements IChessEngine {
     this.sendCommand('go infinite');
   }
 
+  async getEvaluation(depth: number): Promise<EngineInfo> {
+    return new Promise((resolve, reject) => {
+      let lastInfo: EngineInfo | null = null;
+      const prevCallback = this.analysisCallback;
+
+      this.analysisCallback = (info: EngineInfo) => {
+        lastInfo = info;
+      };
+
+      this.sendCommand(`go depth ${depth}`);
+
+      this.waitForResponse('bestmove', () => {
+        this.analysisCallback = prevCallback;
+        if (lastInfo) {
+          resolve(lastInfo);
+        } else {
+          reject(new Error('No evaluation info received'));
+        }
+      });
+    });
+  }
+
   async stopAnalysis(): Promise<void> {
     return new Promise((resolve) => {
       this.sendCommand('stop');
@@ -252,9 +274,11 @@ export class FairyStockfishEngine implements IChessEngine {
     const pv = pvMatch ? pvMatch[1].split(' ') : [];
 
     if (depth !== null && score !== null) {
+      const isMate = line.includes('score mate');
       return {
         depth,
         score,
+        isMate,
         nodes: nodes || 0,
         time: time || 0,
         pv,

@@ -5,7 +5,6 @@ import { ChessClock } from './ChessClock';
 import { ChatBox } from './ChatBox';
 import { GameLog } from './GameLog';
 import { useGameStore } from '../store/gameStore';
-import type { PieceType } from '../game/PiecePool';
 
 /**
  * GameContainer Component
@@ -103,10 +102,6 @@ export function GameContainer() {
     makeMove(from, to, promotion);
   };
 
-  const handlePieceDrop = (pieceType: PieceType) => {
-    selectPiece(pieceType);
-  };
-  
   const handleSquareClick = (square: string) => {
     // Read selectedPiece directly from store to avoid closure issues
     const currentSelectedPiece = useGameStore.getState().selectedPiece;

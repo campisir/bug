@@ -1,16 +1,6 @@
 import { io, Socket } from 'socket.io-client';
 import type { EngineMove } from '../engines/IChessEngine';
 
-interface GameState {
-  id: string;
-  board1Fen: string;
-  board2Fen: string;
-  board1Moves: string[];
-  board2Moves: string[];
-  currentTurn: 'white' | 'black';
-  status: 'waiting' | 'active' | 'completed';
-}
-
 interface MoveData {
   boardId: 1 | 2;
   move: string;
@@ -29,6 +19,7 @@ type MoveCallback = (data: MoveData) => void;
 type EngineMoveCallback = (data: { boardId: number; move: EngineMove }) => void;
 type ChatCallback = (message: ChatMessage) => void;
 type PlayerCallback = (data: { username: string; playerId: string }) => void;
+type PlayerLeftCallback = (data: { playerId: string }) => void;
 
 /**
  * API Service for bughouse.ai
@@ -47,7 +38,7 @@ export class ApiService {
   private onEngineMoveReceived: EngineMoveCallback | null = null;
   private onChatReceived: ChatCallback | null = null;
   private onPlayerJoined: PlayerCallback | null = null;
-  private onPlayerLeft: PlayerCallback | null = null;
+  private onPlayerLeft: PlayerLeftCallback | null = null;
 
   constructor(baseUrl: string = import.meta.env.VITE_API_URL || 'http://localhost:3000') {
     this.baseUrl = baseUrl;
@@ -56,7 +47,7 @@ export class ApiService {
   /**
    * Initialize WebSocket connection
    */
-  connect(username: string): void {
+  connect(_username: string): void {
     if (this.socket?.connected) {
       return;
     }
@@ -133,7 +124,7 @@ export class ApiService {
     onEngineMoveReceived?: EngineMoveCallback;
     onChatReceived?: ChatCallback;
     onPlayerJoined?: PlayerCallback;
-    onPlayerLeft?: PlayerCallback;
+    onPlayerLeft?: PlayerLeftCallback;
   }): void {
     this.onGameStateUpdate = handlers.onGameStateUpdate || null;
     this.onMoveReceived = handlers.onMoveReceived || null;

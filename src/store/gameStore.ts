@@ -4,10 +4,24 @@ import { BughouseGame, GameStatus } from '../game/BughouseGame';
 import type { BughouseGameConfig } from '../game/BughouseGame';
 import type { PieceType } from '../game/PiecePool';
 import { ElectronIPCEngine } from '../engines/ElectronIPCEngine';
+import { ServerEngine } from '../engines/ServerEngine';
+import type { IChessEngine } from '../engines/IChessEngine';
 import type { ChatMessage } from '../components/ChatBox';
 import { useGameLogStore } from './gameLogStore';
 
 export type { ChatMessage };
+
+/** Returns true when running inside Electron with a working preload. */
+function isElectron(): boolean {
+  return typeof window !== 'undefined' && !!window.electronAPI?.engine;
+}
+
+function createEngine(id: string, electronPath: string): IChessEngine {
+  if (isElectron()) {
+    return new ElectronIPCEngine(id, electronPath);
+  }
+  return new ServerEngine();
+}
 
 interface GameState {
   game: BughouseGame | null;
@@ -88,9 +102,9 @@ export const useGameStore = create<GameState>((set, get) => ({
 
       const config: BughouseGameConfig = {
         playerColor: 'w',
-        playerEngine: new ElectronIPCEngine('player-engine', enginePath),
-        partnerEngine1: new ElectronIPCEngine('partner-engine-1', enginePath),
-        partnerEngine2: new ElectronIPCEngine('partner-engine-2', enginePath),
+        playerEngine: createEngine('player-engine', enginePath),
+        partnerEngine1: createEngine('partner-engine-1', enginePath),
+        partnerEngine2: createEngine('partner-engine-2', enginePath),
         thinkingTimeMs: 2000, // Increased to 2 seconds to prevent timeouts
         onChatMessage: (sender, message) => {
           get().addChatMessage(sender, message);

@@ -1,18 +1,18 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "module": "CommonJS",
+    "module": "NodeNext",
     "lib": ["ES2020"],
     "skipLibCheck": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "strict": true,
     "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "node",
+    "moduleResolution": "NodeNext",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "outDir": "./dist-electron",
     "types": ["node"]
   },
-  "include": ["electron/preload.ts"]
+  "include": ["electron/preload.cts"]
 }

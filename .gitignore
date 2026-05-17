@@ -7,18 +7,43 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies
 node_modules
+
+# Build output
 dist
 dist-ssr
-*.local
+dist-electron/
+release/
+
+# Environment variables
+.env
+.env.local
+.env.development
+.env.development.local
+.env.test.local
+# Keep .env.production (contains only public VITE_ vars, no secrets)
+# Keep .env.example
+
+# SSH keys & secrets
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Deployment artifacts
+*.tar.gz
+*.zip
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
 .idea
 .DS_Store
+Thumbs.db
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+*.local

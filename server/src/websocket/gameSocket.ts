@@ -173,6 +173,36 @@ export function initializeWebSocket(httpServer: HTTPServer) {
       }
     });
 
+    // Stateless engine move request (web clients, no game session required)
+    socket.on('getEngineMove', async (data: {
+      requestId: string;
+      fen: string;
+      moves: string[];
+      timeMs?: number;
+      searchMoves?: string[];
+    }) => {
+      const { requestId, fen, moves, timeMs = 1000, searchMoves } = data;
+
+      try {
+        const enginePool = getEnginePool();
+        const engine = await enginePool.acquireEngine();
+
+        try {
+          await engine.setPosition(fen, moves);
+          const bestMove = searchMoves?.length
+            ? await engine.getBestMoveWithSearchMoves(timeMs, searchMoves)
+            : await engine.getBestMove(timeMs);
+
+          socket.emit('engineMoveResult', { requestId, move: bestMove });
+        } finally {
+          enginePool.releaseEngine(engine);
+        }
+      } catch (error) {
+        console.error('[WebSocket] Error in getEngineMove:', error);
+        socket.emit('engineMoveResult', { requestId, error: 'Failed to calculate move' });
+      }
+    });
+
     // Handle disconnection
     socket.on('disconnect', () => {
       console.log(`[WebSocket] Client disconnected: ${socket.id}`);

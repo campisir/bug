@@ -1,14 +1,59 @@
 #!/bin/bash
 
 # Deployment script for bughouse.ai server
-# Run this from your local machine to deploy to EC2
+# Run from the repository ROOT (not the server/ subdirectory)
+# Usage: bash server/scripts/deploy.sh
 
 set -e
 
-# Configuration
-EC2_USER="ubuntu"
-EC2_HOST="your-ec2-ip-or-domain"
-APP_DIR="/var/www/bughouse/server"
+# ── Configuration ─────────────────────────────────────────────────────────────
+EC2_USER="${EC2_USER:-ubuntu}"
+EC2_HOST="${EC2_HOST:?Set EC2_HOST env var to your server IP or hostname}"
+SSH_KEY="${SSH_KEY:-~/.ssh/bughouse-ec2.pem}"
+
+echo "================================"
+echo "Deploying bughouse.ai"
+echo "================================"
+
+# ── Build frontend ────────────────────────────────────────────────────────────
+echo "[1/5] Building frontend..."
+npm ci
+VITE_API_URL=https://bughouse.ai npm run build
+
+# ── Build server ──────────────────────────────────────────────────────────────
+echo "[2/5] Building server..."
+(cd server && npm ci && npm run build)
+
+# ── Upload frontend ───────────────────────────────────────────────────────────
+echo "[3/5] Uploading frontend..."
+rsync -avz --delete \
+  -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=no" \
+  dist/ \
+  "$EC2_USER@$EC2_HOST:/var/www/bughouse/dist/"
+
+# ── Upload server ─────────────────────────────────────────────────────────────
+echo "[4/5] Uploading server..."
+rsync -avz --delete \
+  -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=no" \
+  server/dist/ server/package.json server/package-lock.json \
+  "$EC2_USER@$EC2_HOST:/var/www/bughouse/server/"
+
+# ── Restart PM2 ───────────────────────────────────────────────────────────────
+echo "[5/5] Restarting server..."
+ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$EC2_USER@$EC2_HOST" '
+  set -e
+  cd /var/www/bughouse/server
+  npm ci --production --ignore-scripts
+  pm2 restart bughouse-server || pm2 start dist/index.js --name bughouse-server
+  pm2 save
+'
+
+echo "================================"
+echo "Deployment complete!"
+echo "Health: https://bughouse.ai/health"
+echo "Logs:   ssh $EC2_USER@$EC2_HOST pm2 logs bughouse-server"
+echo "================================"
+
 
 echo "================================"
 echo "Deploying bughouse.ai Server"

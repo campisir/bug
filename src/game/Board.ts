@@ -76,10 +76,6 @@ export class Board {
   addMove(move: Move): void {
     // Make the move on the chess.js board to update FEN
     try {
-      const moveNotation = move.drop 
-        ? `${move.drop.toUpperCase()}@${move.to}`  // Drop notation
-        : `${move.from}${move.to}${move.promotion || ''}`; // Normal move
-      
       if (move.drop) {
         // For drops, manually update the FEN by placing the piece
         // Use dropColor to preserve the actual color of the dropped piece
@@ -90,7 +86,7 @@ export class Board {
       } else {
         // For normal moves, try chess.js first, but if it fails (bughouse position), update manually
         try {
-          const result = this.chess.move({
+          this.chess.move({
             from: move.from,
             to: move.to,
             promotion: move.promotion as any,
@@ -156,7 +152,7 @@ export class Board {
    * @returns true if the drop was successful
    */
   dropPiece(pieceType: PieceType, _square: string): boolean {
-    return this.piecePool.removePiece(pieceType);
+    return this.getPiecePool().removePiece(pieceType);
   }
 
   /**
@@ -165,7 +161,8 @@ export class Board {
   reset(): void {
     this.fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
     this.moveHistory = [];
-    this.piecePool.reset();
+    this.whitePiecePool.reset();
+    this.blackPiecePool.reset();
   }
 
   /**
@@ -210,7 +207,8 @@ export class Board {
   clone(): Board {
     const newBoard = new Board(this.side, this.playerColor, this.fen);
     newBoard.moveHistory = [...this.moveHistory];
-    newBoard.piecePool = this.piecePool.clone();
+    newBoard.whitePiecePool = this.whitePiecePool.clone();
+    newBoard.blackPiecePool = this.blackPiecePool.clone();
     return newBoard;
   }
 

@@ -1,6 +1,86 @@
+## bughouse.ai nginx configuration
+## Copy to /etc/nginx/sites-available/bughouse.ai
+## Then: sudo ln -s /etc/nginx/sites-available/bughouse.ai /etc/nginx/sites-enabled/
+## After SSL: sudo certbot --nginx -d bughouse.ai -d www.bughouse.ai
+
+# Redirect HTTP → HTTPS
 server {
     listen 80;
-    server_name api.bughouse.ai;
+    server_name bughouse.ai www.bughouse.ai;
+    return 301 https://bughouse.ai$request_uri;
+}
+
+# Main site — React SPA + API on the same domain
+server {
+    listen 443 ssl http2;
+    server_name bughouse.ai www.bughouse.ai;
+
+    # SSL — provisioned by certbot, uncomment after running:
+    # sudo certbot --nginx -d bughouse.ai -d www.bughouse.ai
+    # ssl_certificate /etc/letsencrypt/live/bughouse.ai/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/bughouse.ai/privkey.pem;
+    # include /etc/letsencrypt/options-ssl-nginx.conf;
+    # ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss://bughouse.ai; img-src 'self' data:;" always;
+
+    # API endpoints → Node server
+    location /api/ {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    # WebSocket (Socket.IO) → Node server
+    location /socket.io/ {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+    }
+
+    # Health check → Node server
+    location /health {
+        proxy_pass http://localhost:3000;
+        access_log off;
+    }
+
+    # React SPA static files
+    root /var/www/bughouse/dist;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+
+        # Cache static assets aggressively; HTML must re-validate
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+    }
+
+    # Deny hidden files
+    location ~ /\. {
+        deny all;
+    }
+}
+
 
     # Redirect HTTP to HTTPS (after SSL is set up)
     # return 301 https://$server_name$request_uri;

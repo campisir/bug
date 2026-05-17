@@ -1955,6 +1955,7 @@ export class BughouseGame {
     });
 
     // Get evaluation after the move (from White's perspective)
+    const botName = this.identifyBot(board, engine);
     let evalString = '';
     try {
       const baseFen = board.getFen();
@@ -2012,7 +2013,6 @@ export class BughouseGame {
     }
 
     // Log the move with evaluation
-    const botName = this.identifyBot(board, engine);
     const moveNotation = move.drop 
       ? `${move.drop.toUpperCase()}@${move.to}` 
       : move.promotion 

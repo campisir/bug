@@ -18,7 +18,7 @@ export interface EngineInfo {
 
 /**
  * Preload Script
- * 
+ *
  * Exposes safe IPC methods to the renderer process.
  * This runs in a context that has access to both Node.js and browser APIs.
  */
@@ -38,25 +38,25 @@ export interface ElectronAPI {
 // Expose protected methods that allow the renderer process to use ipcRenderer
 contextBridge.exposeInMainWorld('electronAPI', {
   engine: {
-    initialize: (engineId: string, enginePath: string) => 
+    initialize: (engineId: string, enginePath: string) =>
       ipcRenderer.invoke('engine:initialize', engineId, enginePath),
-    
-    setPosition: (engineId: string, fen: string, moves?: string[]) => 
+
+    setPosition: (engineId: string, fen: string, moves?: string[]) =>
       ipcRenderer.invoke('engine:setPosition', engineId, fen, moves),
-    
-    getBestMove: (engineId: string, timeMs: number) => 
+
+    getBestMove: (engineId: string, timeMs: number) =>
       ipcRenderer.invoke('engine:getBestMove', engineId, timeMs),
 
     getBestMoveWithSearchMoves: (engineId: string, timeMs: number, searchMoves: string[]) =>
       ipcRenderer.invoke('engine:getBestMoveWithSearchMoves', engineId, timeMs, searchMoves),
-    
+
     getEvaluation: (engineId: string, depth: number) =>
       ipcRenderer.invoke('engine:getEvaluation', engineId, depth),
-    
-    setOptions: (engineId: string, options: Record<string, string | number>) => 
+
+    setOptions: (engineId: string, options: Record<string, string | number>) =>
       ipcRenderer.invoke('engine:setOptions', engineId, options),
-    
-    shutdown: (engineId: string) => 
+
+    shutdown: (engineId: string) =>
       ipcRenderer.invoke('engine:shutdown', engineId),
   },
 });
