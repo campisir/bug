@@ -32,7 +32,7 @@ jobs:
       # ── Server ────────────────────────────────────────────────────────────
       - name: Install server dependencies
         working-directory: server
-        run: npm ci --production
+        run: npm ci
 
       - name: Build server
         working-directory: server
