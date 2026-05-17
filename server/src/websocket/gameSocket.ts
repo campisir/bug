@@ -1,7 +1,22 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import { Server as HTTPServer } from 'http';
+import path from 'path';
 import { getEnginePool } from '../services/EnginePool';
 import { query } from '../database/connection';
+
+/**
+ * Resolve client-supplied engine options for server-side use.
+ * Client paths (e.g. VariantPath) are relative to the project root, but
+ * the server process runs from the server/ sub-directory, so we go up one level.
+ */
+function resolveOptions(options: Record<string, string | number>): Record<string, string | number> {
+  const resolved = { ...options };
+  if (typeof resolved.VariantPath === 'string' && !path.isAbsolute(resolved.VariantPath)) {
+    const base = process.env.VARIANT_BASE_PATH || path.join(process.cwd(), '..');
+    resolved.VariantPath = path.join(base, resolved.VariantPath);
+  }
+  return resolved;
+}
 
 interface GameRoom {
   gameId: string;
@@ -180,18 +195,29 @@ export function initializeWebSocket(httpServer: HTTPServer) {
       moves: string[];
       timeMs?: number;
       searchMoves?: string[];
+      options?: Record<string, string | number>;
     }) => {
-      const { requestId, fen, moves, timeMs = 1000, searchMoves } = data;
+      const { requestId, fen, moves, timeMs = 1000, searchMoves, options } = data;
 
       try {
         const enginePool = getEnginePool();
         const engine = await enginePool.acquireEngine();
+        let variantChanged = false;
 
         try {
+          if (options) {
+            await engine.setOptions(resolveOptions(options));
+            variantChanged = !!options.UCI_Variant;
+          }
           await engine.setPosition(fen, moves);
           const bestMove = searchMoves?.length
             ? await engine.getBestMoveWithSearchMoves(timeMs, searchMoves)
             : await engine.getBestMove(timeMs);
+
+          // Restore bughouse variant so engine is clean when returned to pool
+          if (variantChanged) {
+            await engine.setOptions({ UCI_Variant: 'bughouse' });
+          }
 
           socket.emit('engineMoveResult', { requestId, move: bestMove });
         } finally {
@@ -200,6 +226,43 @@ export function initializeWebSocket(httpServer: HTTPServer) {
       } catch (error) {
         console.error('[WebSocket] Error in getEngineMove:', error);
         socket.emit('engineMoveResult', { requestId, error: 'Failed to calculate move' });
+      }
+    });
+
+    // Stateless engine evaluation request (used for stall detection)
+    socket.on('getEngineEvaluation', async (data: {
+      requestId: string;
+      fen: string;
+      depth: number;
+      options?: Record<string, string | number>;
+    }) => {
+      const { requestId, fen, depth, options } = data;
+
+      try {
+        const enginePool = getEnginePool();
+        const engine = await enginePool.acquireEngine();
+        let variantChanged = false;
+
+        try {
+          if (options) {
+            await engine.setOptions(resolveOptions(options));
+            variantChanged = !!options.UCI_Variant;
+          }
+          await engine.setPosition(fen, []);
+          const info = await engine.getEvaluation(depth);
+
+          // Restore bughouse variant so engine is clean for pool reuse
+          if (variantChanged) {
+            await engine.setOptions({ UCI_Variant: 'bughouse' });
+          }
+
+          socket.emit('engineEvaluationResult', { requestId, info });
+        } finally {
+          enginePool.releaseEngine(engine);
+        }
+      } catch (error) {
+        console.error('[WebSocket] Error in getEngineEvaluation:', error);
+        socket.emit('engineEvaluationResult', { requestId, error: 'Failed to evaluate position' });
       }
     });
 

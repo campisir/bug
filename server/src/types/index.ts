@@ -8,6 +8,7 @@ export interface EngineMove {
 export interface EngineInfo {
   depth: number;
   score: number;
+  isMate: boolean;
   nodes: number;
   time: number;
   pv: string[];
@@ -18,6 +19,7 @@ export interface IChessEngine {
   setPosition(fen: string, moves?: string[]): Promise<void>;
   getBestMove(timeMs: number): Promise<EngineMove>;
   getBestMoveWithSearchMoves(timeMs: number, searchMoves: string[]): Promise<EngineMove>;
+  getEvaluation(depth: number): Promise<EngineInfo>;
   startAnalysis(callback: (info: EngineInfo) => void): void;
   stopAnalysis(): Promise<void>;
   sendCommand(command: string): void;

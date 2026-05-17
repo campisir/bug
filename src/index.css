@@ -1,68 +1,72 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  /* ── Design tokens ── */
+  --bg:           #f0ece4;
+  --surface:      #ffffff;
+  --surface-2:    #faf8f4;
+  --navy:         #1c3557;
+  --navy-hover:   #264a77;
+  --gold:         #b8882e;
+  --gold-light:   #d4a44a;
+  --text:         #1a2744;
+  --text-muted:   #5a6b7d;
+  --border:       #ddd8d0;
+  --border-light: #edeae5;
+  --green:        #2e7d32;
+  --green-hover:  #1b5e20;
+  --red:          #c62828;
+  --red-hover:    #b71c1c;
+  --blue:         #1565c0;
+  --shadow-sm:    0 1px 3px rgba(0,0,0,0.08);
+  --shadow-md:    0 4px 12px rgba(0,0,0,0.12);
+  --shadow-lg:    0 8px 28px rgba(0,0,0,0.18);
+  --radius-sm:    4px;
+  --radius-md:    8px;
+  --radius-lg:    12px;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
+html, body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
 }
 
 body {
-  margin: 0;
-  display: flex;
-  place-items: center;
   min-width: 320px;
+}
+
+#root {
   min-height: 100vh;
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
-
 button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
   font-family: inherit;
-  background-color: #1a1a1a;
+  font-size: 0.875rem;
+  font-weight: 600;
   cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0.45em 1em;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+button:active {
+  transform: translateY(1px);
+}
+
+select {
+  font-family: inherit;
 }

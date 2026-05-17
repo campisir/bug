@@ -107,6 +107,8 @@ export class EnginePool {
   private async createEngine(): Promise<FairyStockfishEngine> {
     const engine = new FairyStockfishEngine(this.enginePath);
     await engine.initialize();
+    // All pool engines run bughouse variant by default
+    await engine.setOptions({ UCI_Variant: 'bughouse' });
     return engine;
   }
 

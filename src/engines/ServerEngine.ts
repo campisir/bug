@@ -34,6 +34,7 @@ function getSocket(): Socket {
 export class ServerEngine implements IChessEngine {
   private currentFen: string = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
   private currentMoves: string[] = [];
+  private pendingOptions: Record<string, string | number> | null = null;
 
   async initialize(): Promise<void> {
     // Ensure socket is connected; actual engine lifecycle is managed server-side
@@ -70,6 +71,9 @@ export class ServerEngine implements IChessEngine {
     return new Promise((resolve, reject) => {
       const socket = getSocket();
       const requestId = crypto.randomUUID();
+      // Capture and clear pending options atomically so concurrent calls don't share them
+      const optionsToSend = this.pendingOptions;
+      this.pendingOptions = null;
 
       const timeout = setTimeout(() => {
         socket.off('engineMoveResult', handler);
@@ -95,13 +99,44 @@ export class ServerEngine implements IChessEngine {
         moves: this.currentMoves,
         timeMs,
         ...(searchMoves?.length ? { searchMoves } : {}),
+        ...(optionsToSend ? { options: optionsToSend } : {}),
       });
     });
   }
 
-  async getEvaluation(_depth: number): Promise<EngineInfo> {
-    // Not implemented for web mode; return a stub
-    return { depth: 0, score: 0, isMate: false, pv: [], nodes: 0, time: 0 };
+  async getEvaluation(depth: number): Promise<EngineInfo> {
+    return new Promise((resolve, reject) => {
+      const socket = getSocket();
+      const requestId = crypto.randomUUID();
+      const optionsToSend = this.pendingOptions;
+      this.pendingOptions = null;
+
+      // Depth 12 at ~2s per ply is a reasonable upper bound
+      const timeout = setTimeout(() => {
+        socket.off('engineEvaluationResult', handler);
+        reject(new Error('Engine evaluation timeout'));
+      }, depth * 2000 + 10000);
+
+      const handler = (data: { requestId: string; info?: EngineInfo; error?: string }) => {
+        if (data.requestId !== requestId) return;
+        clearTimeout(timeout);
+        socket.off('engineEvaluationResult', handler);
+
+        if (data.error || !data.info) {
+          reject(new Error(data.error ?? 'No evaluation returned from server'));
+        } else {
+          resolve(data.info);
+        }
+      };
+
+      socket.on('engineEvaluationResult', handler);
+      socket.emit('getEngineEvaluation', {
+        requestId,
+        fen: this.currentFen,
+        depth,
+        ...(optionsToSend ? { options: optionsToSend } : {}),
+      });
+    });
   }
 
   startAnalysis(_callback: (info: EngineInfo) => void): void {
@@ -120,8 +155,9 @@ export class ServerEngine implements IChessEngine {
     return sharedSocket?.connected ?? false;
   }
 
-  async setOptions(_options: Record<string, string | number>): Promise<void> {
-    // Options are configured server-side
+  async setOptions(options: Record<string, string | number>): Promise<void> {
+    // Stored and forwarded with the next getBestMove / getBestMoveWithSearchMoves call
+    this.pendingOptions = { ...options };
   }
 }
 

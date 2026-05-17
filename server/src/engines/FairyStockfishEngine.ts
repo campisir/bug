@@ -123,6 +123,35 @@ export class FairyStockfishEngine implements IChessEngine {
     this.lastUsed = new Date();
   }
 
+  async getEvaluation(depth: number): Promise<EngineInfo> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.analysisCallback = null;
+        reject(new Error('Engine evaluation timeout'));
+      }, depth * 2000 + 5000);
+
+      let lastInfo: EngineInfo | null = null;
+      const originalCallback = this.analysisCallback;
+
+      this.analysisCallback = (info: EngineInfo) => {
+        lastInfo = info;
+      };
+
+      this.sendCommand(`go depth ${depth}`);
+
+      this.waitForResponse('bestmove', () => {
+        clearTimeout(timeout);
+        this.analysisCallback = originalCallback;
+        this.lastUsed = new Date();
+        if (lastInfo) {
+          resolve(lastInfo);
+        } else {
+          reject(new Error('No evaluation info received'));
+        }
+      });
+    });
+  }
+
   async stopAnalysis(): Promise<void> {
     return new Promise((resolve) => {
       this.sendCommand('stop');
@@ -250,7 +279,10 @@ export class FairyStockfishEngine implements IChessEngine {
 
   private parseInfo(line: string): EngineInfo | null {
     const depth = this.extractValue(line, 'depth');
-    const score = this.extractValue(line, 'score cp') || this.extractValue(line, 'score mate');
+    const cpScore = this.extractValue(line, 'score cp');
+    const mateScore = this.extractValue(line, 'score mate');
+    const score = cpScore ?? mateScore;
+    const isMate = mateScore !== null;
     const nodes = this.extractValue(line, 'nodes');
     const time = this.extractValue(line, 'time');
     const pvMatch = line.match(/pv (.+)$/);
@@ -260,6 +292,7 @@ export class FairyStockfishEngine implements IChessEngine {
       return {
         depth,
         score,
+        isMate,
         nodes: nodes || 0,
         time: time || 0,
         pv,

@@ -122,17 +122,18 @@ export function GameContainer() {
 
   return (
     <div className="game-container">
-      <div className="game-header">
-        <h1>Bughouse Chess</h1>
-        <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
+      <header className="game-header">
+        <h1 className="game-title">bughouse.ai</h1>
+        <div className="header-controls">
           <div className="game-status">
-            Status: <span className="status-badge">{gameStatus}</span>
+            <span className="status-label">Status</span>
+            <span className={`status-badge status-${gameStatus}`}>{gameStatus.replace('_', ' ')}</span>
           </div>
           <div className="position-selector">
-            <label htmlFor="position-select">Starting Position: </label>
-            <select 
-              id="position-select" 
-              value={selectedPosition} 
+            <label htmlFor="position-select">Position:</label>
+            <select
+              id="position-select"
+              value={selectedPosition}
               onChange={(e) => setSelectedPosition(e.target.value)}
               disabled={gameStatus === 'in_progress'}
             >
@@ -142,13 +143,13 @@ export function GameContainer() {
             </select>
           </div>
         </div>
-      </div>
+      </header>
 
       {/* Game Over Overlay */}
       {showGameOver && gameStatus !== 'in_progress' && gameStatus !== 'not_started' && (
         <div className="game-over-overlay">
           <div className="game-over-modal">
-            <h2>Game Over!</h2>
+            <h2>Game Over</h2>
             <p className="result">
               {gameStatus === 'player_won' && '🎉 You Won!'}
               {gameStatus === 'player_lost' && '😔 You Lost'}
@@ -157,11 +158,11 @@ export function GameContainer() {
               {gameStatus === 'draw' && '🤝 Draw'}
               {gameStatus === 'finished' && '⏱️ Time Out'}
             </p>
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-              <button onClick={() => setShowGameOver(false)} className="close-button">
+            <div className="modal-actions">
+              <button onClick={() => setShowGameOver(false)} className="modal-btn modal-btn-secondary">
                 Close
               </button>
-              <button onClick={() => setShowGameLog(true)} className="close-button" style={{ background: '#2196F3' }}>
+              <button onClick={() => setShowGameLog(true)} className="modal-btn modal-btn-primary">
                 View Game Log
               </button>
             </div>
@@ -173,16 +174,20 @@ export function GameContainer() {
         {/* Player Board Section */}
         <div className="board-section player-board">
           <div className="board-header">
-            <h2>Your Board</h2>
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', justifyContent: 'center' }}>
+            <div className="board-header-left">
+              <h2>Your Board</h2>
               <span className="board-info">
                 Playing as {playerBoard?.getPlayerColor() === 'w' ? 'White' : 'Black'}
-                {selectedPiece && <span style={{marginLeft: '10px', color: '#e67e22'}}>● Drop mode: {selectedPiece.toUpperCase()}</span>}
               </span>
-              <button onClick={resign} className="control-button resign-button">Resign</button>
+            </div>
+            <div className="board-header-right">
+              {selectedPiece && (
+                <span className="drop-indicator">⬇ Drop: {selectedPiece.toUpperCase()}</span>
+              )}
+              <button onClick={resign} className="resign-button">Resign</button>
             </div>
           </div>
-          
+
           <div className="board-with-pool">
             <div className="pool-wrapper player-pool">
               {playerWhitePiecePool && playerBlackPiecePool && (
@@ -194,9 +199,9 @@ export function GameContainer() {
                 />
               )}
             </div>
-            
+
             <div className="board-and-clock">
-              <div className="board-wrapper player-board-wrapper">
+              <div className="board-wrapper">
                 {playerBoard && (
                   <ChessBoard
                     key="player-board"
@@ -210,7 +215,7 @@ export function GameContainer() {
                   />
                 )}
               </div>
-              
+
               <div className="clock-container">
                 {playerBoard && (
                   <ChessClock
@@ -225,94 +230,130 @@ export function GameContainer() {
           </div>
         </div>
 
-        {/* Partner Board Section */}
-        <div className="board-section partner-board">
-          <div className="board-header">
-            <h2>Partner Board</h2>
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', justifyContent: 'center' }}>
-              <span className="board-info">Bots Playing</span>
-            </div>
-          </div>
-          
-          <div className="board-with-pool">
-            <div className="board-and-clock">
-              <div className="board-wrapper partner-board-wrapper">
-                {partnerBoard && (
-                  <ChessBoard
-                    key="partner-board"
-                    fen={partnerFen}
-                    orientation={partnerBoard.getPlayerColor() === 'w' ? 'white' : 'black'}
-                    movable={false}
-                    lastMove={partnerLastMove}
-                  />
-                )}
-              </div>
-              
-              <div className="clock-container">
-                {partnerBoard && (
-                  <ChessClock
-                    whiteTime={partnerWhiteTime}
-                    blackTime={partnerBlackTime}
-                    currentTurn={partnerTurn}
-                    playerColor={partnerBoard.getPlayerColor()}
-                  />
-                )}
+        {/* Right column: partner board + chat stacked */}
+        <div className="right-column">
+          <div className="board-section partner-board">
+            <div className="board-header">
+              <div className="board-header-left">
+                <h2>Partner Board</h2>
+                <span className="board-info">Bots playing</span>
               </div>
             </div>
-            
-            <div className="pool-wrapper partner-pool">
-              {partnerWhitePiecePool && partnerBlackPiecePool && (
-                <PiecePoolDisplay
-                  whitePieces={partnerWhitePiecePool}
-                  blackPieces={partnerBlackPiecePool}
-                />
-              )}
-            </div>
-          </div>
-        </div>
 
-        {/* Chat Box Section */}
-        <div className="chat-section">
-          <ChatBox 
-            messages={chatMessages} 
-            onSendGo={sendGoCommand}
-            onSendSit={sendSitCommand}
-          />
+            <div className="board-with-pool">
+              <div className="board-and-clock">
+                <div className="board-wrapper">
+                  {partnerBoard && (
+                    <ChessBoard
+                      key="partner-board"
+                      fen={partnerFen}
+                      orientation={partnerBoard.getPlayerColor() === 'w' ? 'white' : 'black'}
+                      movable={false}
+                      lastMove={partnerLastMove}
+                    />
+                  )}
+                </div>
+
+                <div className="clock-container">
+                  {partnerBoard && (
+                    <ChessClock
+                      whiteTime={partnerWhiteTime}
+                      blackTime={partnerBlackTime}
+                      currentTurn={partnerTurn}
+                      playerColor={partnerBoard.getPlayerColor()}
+                    />
+                  )}
+                </div>
+              </div>
+
+              <div className="pool-wrapper partner-pool">
+                {partnerWhitePiecePool && partnerBlackPiecePool && (
+                  <PiecePoolDisplay
+                    whitePieces={partnerWhitePiecePool}
+                    blackPieces={partnerBlackPiecePool}
+                    compact
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Chat directly below partner board */}
+          <div className="chat-section">
+            <ChatBox
+              messages={chatMessages}
+              onSendGo={sendGoCommand}
+              onSendSit={sendSitCommand}
+            />
+          </div>
         </div>
       </div>
 
       <style>{`
+        /* ── Layout ─────────────────────────────────────────── */
         .game-container {
-          padding: 20px;
-          max-width: 100%;
-          margin: 0 auto;
+          min-height: 100vh;
+          display: flex;
+          flex-direction: column;
+          background: var(--bg);
         }
 
+        /* ── Header ─────────────────────────────────────────── */
         .game-header {
-          text-align: center;
-          margin-bottom: 30px;
+          background: var(--navy);
+          padding: 14px 24px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 12px;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.25);
         }
 
-        .game-header h1 {
-          margin: 0 0 10px 0;
-          color: #333;
+        .game-title {
+          margin: 0;
+          color: #fff;
+          font-size: 1.4rem;
+          font-weight: 700;
+          letter-spacing: 0.04em;
+          white-space: nowrap;
+        }
+
+        .header-controls {
+          display: flex;
+          align-items: center;
+          gap: 20px;
+          flex-wrap: wrap;
         }
 
         .game-status {
-          font-size: 18px;
-          color: #666;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .status-label {
+          color: rgba(255,255,255,0.65);
+          font-size: 0.8rem;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
         }
 
         .status-badge {
           display: inline-block;
-          padding: 4px 12px;
-          background: #4CAF50;
-          color: white;
-          border-radius: 4px;
-          font-weight: 600;
+          padding: 3px 10px;
+          border-radius: 99px;
+          font-size: 0.75rem;
+          font-weight: 700;
           text-transform: uppercase;
-          font-size: 14px;
+          letter-spacing: 0.05em;
+          background: var(--gold);
+          color: #fff;
         }
+
+        .status-badge.status-in_progress { background: var(--green); }
+        .status-badge.status-player_won  { background: var(--gold); }
+        .status-badge.status-player_lost { background: var(--red); }
 
         .position-selector {
           display: flex;
@@ -321,236 +362,300 @@ export function GameContainer() {
         }
 
         .position-selector label {
-          font-size: 14px;
-          color: #666;
-          font-weight: 500;
+          color: rgba(255,255,255,0.65);
+          font-size: 0.8rem;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          white-space: nowrap;
         }
 
         .position-selector select {
-          padding: 6px 12px;
-          border: 1px solid #ddd;
-          border-radius: 4px;
-          background: white;
-          font-size: 14px;
+          padding: 5px 10px;
+          border: 1px solid rgba(255,255,255,0.25);
+          border-radius: var(--radius-sm);
+          background: rgba(255,255,255,0.12);
+          color: #fff;
+          font-size: 0.85rem;
           cursor: pointer;
           outline: none;
         }
 
         .position-selector select:hover:not(:disabled) {
-          border-color: #4CAF50;
+          border-color: var(--gold-light);
+          background: rgba(255,255,255,0.18);
         }
 
         .position-selector select:disabled {
-          background: #f5f5f5;
+          opacity: 0.45;
           cursor: not-allowed;
-          opacity: 0.6;
         }
 
+        .position-selector select option {
+          background: var(--navy);
+          color: #fff;
+        }
+
+        /* ── Boards container ────────────────────────────────── */
         .boards-container {
+          flex: 1;
           display: flex;
-          gap: 30px;
-          justify-content: center;
-          align-items: flex-start;
-        }
-
-        .chat-section {
-          flex-shrink: 0;
-          align-self: flex-start;
-          position: sticky;
-          top: 20px;
-        }
-
-        .board-section {
-          flex-shrink: 0;
+          gap: 28px;
+          padding: 28px;
+          align-items: start;
+          /* Center content on very wide / 4K displays */
+          max-width: 1700px;
+          margin: 0 auto;
+          width: 100%;
         }
 
         .board-section.player-board {
-          order: 1;
+          flex: 3;
+          min-width: 0;
         }
 
-        .board-section.partner-board {
-          order: 2;
+        .right-column {
+          flex: 2;
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+        }
+
+        /* ── Board sections ──────────────────────────────────── */
+        .board-section {
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+          min-width: 0;
         }
 
         .board-header {
-          margin-bottom: 15px;
-          text-align: center;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 0 2px;
+        }
+
+        .board-header-left {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .board-header-right {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-shrink: 0;
         }
 
         .board-header h2 {
-          margin: 0 0 5px 0;
-          color: #333;
+          margin: 0;
+          color: var(--navy);
+          font-size: 1rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
         }
 
         .board-info {
-          color: #666;
-          font-size: 14px;
+          color: var(--text-muted);
+          font-size: 0.78rem;
         }
 
-        .control-button {
-          padding: 6px 12px;
-          background: #4CAF50;
-          color: white;
-          border: none;
-          border-radius: 4px;
-          cursor: pointer;
-          font-size: 14px;
-          transition: background 0.2s;
-        }
-
-        .control-button:hover {
-          background: #45a049;
-        }
-        .resign-button {
-          background: #f44336;
-        }
-
-        .resign-button:hover {
-          background: #da190b;
-        }        .resign-button {
-          background: #f44336;
-        }
-
-        .resign-button:hover {
-          background: #da190b;
-        }
-        .control-button:active {
-          background: #3d8b40;
-        }
-
-        .pool-wrapper {
-          display: flex;
-          flex-direction: column;
-          gap: 15px;
-        }
-
-        .pool-wrapper h3 {
-          margin: 10px 0 5px 0;
-          font-size: 14px;
+        .drop-indicator {
+          font-size: 0.78rem;
           font-weight: 600;
-          color: #555;
-          text-align: center;
+          color: var(--gold);
+          background: rgba(184,136,46,0.12);
+          padding: 3px 8px;
+          border-radius: 99px;
+          white-space: nowrap;
         }
 
+        .resign-button {
+          background: var(--red);
+          color: #fff;
+          font-size: 0.8rem;
+          padding: 5px 12px;
+          border-radius: var(--radius-sm);
+          white-space: nowrap;
+        }
+
+        .resign-button:hover { background: var(--red-hover); }
+
+        /* ── Board + pool row ────────────────────────────────── */
         .board-with-pool {
           display: flex;
-          gap: 20px;
-          align-items: center;
+          gap: 14px;
+          align-items: stretch;
         }
 
         .board-and-clock {
+          flex: 1;
+          min-width: 0;
           display: flex;
           flex-direction: column;
-          gap: 15px;
+          gap: 12px;
+        }
+
+        /* Size caps: constrain container so board AND clock share the same width */
+        .board-section.player-board .board-and-clock {
+          max-width: min(760px, calc(100vh - 260px));
+        }
+
+        .right-column .board-and-clock {
+          max-width: min(520px, calc(100vh - 260px));
         }
 
         .board-wrapper {
-          flex-shrink: 0;
-          box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-          border-radius: 4px;
+          aspect-ratio: 1 / 1;
+          width: 100%;
+          border-radius: var(--radius-sm);
           overflow: hidden;
-        }
-
-        .player-board-wrapper {
-          width: 600px;
-          height: 600px;
-        }
-
-        .partner-board-wrapper {
-          width: 600px;
-          height: 600px;
+          box-shadow: var(--shadow-md);
         }
 
         .board-wrapper > div {
           width: 100% !important;
           height: 100% !important;
+          max-width: none !important;
+          max-height: none !important;
         }
 
         .clock-container {
-          width: 600px;
+          width: 100%;
         }
 
+        /* ── Piece pool wrapper ───────────────────────────────── */
         .pool-wrapper {
           flex-shrink: 0;
+          width: 120px;
           display: flex;
           flex-direction: column;
         }
 
-        .player-pool {
-          width: 200px;
-          height: 600px;
+        .player-pool  { width: 190px; }
+        .partner-pool { width: 130px; }
+
+        /* ── Chat section ────────────────────────────────────── */
+        .chat-section {
+          width: 100%;
         }
 
-        .partner-pool {
-          width: 200px;
-          height: 600px;
-        }
-
+        /* ── Game Over overlay ───────────────────────────────── */
         .game-over-overlay {
           position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background: rgba(0, 0, 0, 0.7);
+          inset: 0;
+          background: rgba(0, 0, 0, 0.6);
           display: flex;
           align-items: center;
           justify-content: center;
           z-index: 1000;
-          animation: fadeIn 0.3s ease-in;
+          animation: gcFadeIn 0.25s ease;
+          backdrop-filter: blur(3px);
         }
 
-        @keyframes fadeIn {
-          from {
-            opacity: 0;
-          }
-          to {
-            opacity: 1;
-          }
+        @keyframes gcFadeIn {
+          from { opacity: 0; }
+          to   { opacity: 1; }
         }
 
         .game-over-modal {
-          background: white;
-          padding: 40px 60px;
-          border-radius: 12px;
-          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+          background: var(--surface);
+          padding: 40px 52px;
+          border-radius: var(--radius-lg);
+          box-shadow: var(--shadow-lg);
           text-align: center;
-          animation: slideUp 0.3s ease-out;
+          animation: gcSlideUp 0.25s ease-out;
+          max-width: 90vw;
         }
 
-        @keyframes slideUp {
-          from {
-            transform: translateY(50px);
-            opacity: 0;
-          }
-          to {
-            transform: translateY(0);
-            opacity: 1;
-          }
+        @keyframes gcSlideUp {
+          from { transform: translateY(40px); opacity: 0; }
+          to   { transform: translateY(0);    opacity: 1; }
         }
 
         .game-over-modal h2 {
-          margin: 0 0 20px 0;
-          color: #333;
-          font-size: 32px;
+          margin: 0 0 8px 0;
+          color: var(--navy);
+          font-size: 1.8rem;
+          font-weight: 800;
+          letter-spacing: 0.02em;
         }
 
         .game-over-modal .result {
-          font-size: 24px;
+          font-size: 1.4rem;
           font-weight: 600;
-          color: #4CAF50;
-          margin: 0;
+          color: var(--text);
+          margin: 0 0 28px 0;
         }
 
+        .modal-actions {
+          display: flex;
+          gap: 12px;
+          justify-content: center;
+        }
 
-        @media (max-width: 1200px) {
+        .modal-btn {
+          padding: 10px 22px;
+          border-radius: var(--radius-md);
+          font-size: 0.9rem;
+          font-weight: 600;
+          cursor: pointer;
+          border: none;
+          transition: background 0.15s, transform 0.1s;
+        }
+
+        .modal-btn:hover { filter: brightness(1.1); }
+        .modal-btn-secondary { background: var(--border); color: var(--text); }
+        .modal-btn-primary   { background: var(--blue); color: #fff; }
+
+        /* ── Responsive: mobile (≤860px) ────────────────────── */
+        @media (max-width: 860px) {
           .boards-container {
             flex-direction: column;
-            align-items: center;
+            padding: 16px 14px;
+            gap: 20px;
           }
+          .board-section.player-board,
+          .right-column {
+            flex: none;
+            width: 100%;
+          }
+          .board-with-pool {
+            flex-direction: column;
+            gap: 10px;
+          }
+          .player-pool {
+            order: 2;
+            width: 100%;
+          }
+          .partner-pool {
+            width: 100%;
+          }
+          .board-and-clock {
+            order: 1;
+          }
+          .pool-wrapper {
+            width: 100%;
+          }
+        }
 
-          .board-section {
-            max-width: 100%;
+        /* ── Responsive: small header ────────────────────────── */
+        @media (max-width: 560px) {
+          .game-header {
+            flex-direction: column;
+            align-items: flex-start;
+            padding: 12px 16px;
+          }
+          .game-title {
+            font-size: 1.15rem;
+          }
+          .header-controls {
+            width: 100%;
+            gap: 12px;
           }
         }
       `}</style>

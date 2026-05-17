@@ -183,14 +183,9 @@ export function ChessBoard({
   };
 
   return (
-    <div 
-      ref={boardRef} 
-      style={{ 
-        width: '100%', 
-        height: '100%',
-        maxWidth: '500px',
-        maxHeight: '500px',
-      }} 
+    <div
+      ref={boardRef}
+      style={{ width: '100%', height: '100%' }}
     />
   );
 }

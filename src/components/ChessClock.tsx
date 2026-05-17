@@ -31,7 +31,7 @@ export function ChessClock({ whiteTime, blackTime, currentTurn, playerColor: _pl
         <span className="clock-label">Black</span>
         <span className="clock-time">{formatTime(blackTime)}</span>
       </div>
-      
+
       <div className={`clock-display ${isWhiteActive ? 'active' : ''} ${isWhiteLow ? 'low-time' : ''}`}>
         <span className="clock-label">White</span>
         <span className="clock-time">{formatTime(whiteTime)}</span>
@@ -41,7 +41,7 @@ export function ChessClock({ whiteTime, blackTime, currentTurn, playerColor: _pl
         .chess-clock {
           display: flex;
           flex-direction: column;
-          gap: 8px;
+          gap: 6px;
           width: 100%;
         }
 
@@ -49,54 +49,72 @@ export function ChessClock({ whiteTime, blackTime, currentTurn, playerColor: _pl
           display: flex;
           justify-content: space-between;
           align-items: center;
-          padding: 12px 16px;
-          background: #f5f5f5;
-          border-radius: 8px;
-          border: 2px solid #ddd;
-          transition: all 0.2s;
+          padding: 10px 14px;
+          background: var(--surface);
+          border: 1.5px solid var(--border);
+          border-radius: var(--radius-sm);
+          transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
         }
 
         .clock-display.active {
-          background: #e3f2fd;
-          border-color: #2196F3;
-          box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+          background: rgba(28, 53, 87, 0.06);
+          border-color: var(--navy);
+          box-shadow: 0 0 0 2px rgba(28,53,87,0.12);
         }
 
         .clock-display.low-time {
-          background: #ffebee;
-          border-color: #f44336;
-          animation: pulse 1s ease-in-out infinite;
+          background: rgba(198, 40, 40, 0.06);
+          border-color: var(--red);
+          animation: clockPulse 0.9s ease-in-out infinite;
         }
 
         .clock-display.low-time.active {
-          background: #ffcdd2;
-          border-color: #f44336;
+          background: rgba(198, 40, 40, 0.12);
         }
 
-        @keyframes pulse {
-          0%, 100% {
-            opacity: 1;
-          }
-          50% {
-            opacity: 0.7;
-          }
+        @keyframes clockPulse {
+          0%, 100% { opacity: 1; }
+          50%       { opacity: 0.65; }
         }
 
         .clock-label {
-          font-size: 14px;
+          font-size: 0.75rem;
           font-weight: 600;
-          color: #555;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          color: var(--text-muted);
+        }
+
+        .clock-display.active .clock-label {
+          color: var(--navy);
         }
 
         .clock-time {
-          font-size: 24px;
-          font-weight: bold;
-          font-family: 'Courier New', monospace;
-          color: #333;
+          font-size: 1.3rem;
+          font-weight: 700;
+          font-family: 'Courier New', 'JetBrains Mono', monospace;
+          color: var(--text);
+          letter-spacing: 0.04em;
         }
 
         .clock-display.low-time .clock-time {
-          color: #f44336;
+          color: var(--red);
+        }
+
+        @media (max-width: 860px) {
+          .chess-clock {
+            flex-direction: row;
+          }
+          .clock-display {
+            flex: 1;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+            padding: 8px 6px;
+          }
+          .clock-time {
+            font-size: 1.1rem;
+          }
         }
       `}</style>
     </div>
