@@ -86,16 +86,24 @@ export const useGameStore = create<GameState>((set, get) => ({
   partnerLastMove: null,
   chatMessages: [],
   
-  // Initialize clocks: Bot 1 (playerBlack) at 10 minutes, others at 5 minutes
+  // Initialize clocks: 5 minutes each
   playerWhiteTime: 300000,
-  playerBlackTime: 410000, // Bot 1 gets 10 minutes for testing
-  partnerWhiteTime: 410000,
+  playerBlackTime: 300000,
+  partnerWhiteTime: 300000,
   partnerBlackTime: 300000,
 
   initialize: async (playerBoardFen?: string, partnerBoardFen?: string) => {
     try {
       // Start logging
       useGameLogStore.getState().startLogging();
+
+      // Reset clocks to 5 minutes each
+      set({
+        playerWhiteTime: 300000,
+        playerBlackTime: 300000,
+        partnerWhiteTime: 300000,
+        partnerBlackTime: 300000,
+      });
 
       // Engine path relative to project root
       const enginePath = 'engines/fairy-stockfish.exe';
