@@ -41,7 +41,7 @@ export interface BughouseGameConfig {
 }
 
 // Partner request approach modes
-type PartnerRequestApproach = 'royal-piece' | 'high-value' | 'proximity';
+type PartnerRequestApproach = 'royal-piece' | 'high-value' | 'proximity' | 'protect-soft' | 'protect-urgent';
 
 export class BughouseGame {
   // TEST CONFIGURATION: Switch between approaches
@@ -91,6 +91,14 @@ export class BughouseGame {
   
   // Track when partner was forced to go (prevent immediate re-stall)
   private partnerForcedToGo: boolean = false;
+
+  // Player-initiated signals: which pieces they want Partner to prioritize capturing
+  // 'soft' = try when reasonable; 'urgent' = sacrifice anything for it
+  private playerSignals: Partial<Record<PieceType, 'soft' | 'urgent'>> = {};
+
+  // Player-initiated avoid signals: which pieces they want Partner to avoid losing
+  // 'soft' = protect reasonably; 'urgent' = protect at all costs (losing it mates the player)
+  private playerAvoidSignals: Partial<Record<PieceType, 'soft' | 'urgent'>> = {};
 
   constructor(config: BughouseGameConfig) {
     // Player board: player vs engine
@@ -443,6 +451,71 @@ export class BughouseGame {
   }
 
   /**
+   * Update the thinking time for all bots (takes effect on the next move)
+   */
+  setThinkingTimeMs(ms: number): void {
+    this.thinkingTimeMs = ms;
+  }
+
+  /**
+   * Set a player-initiated signal for Partner to prioritize capturing a piece.
+   * 'soft'  = try to capture when reasonable, don't sacrifice too much
+   * 'urgent' = sacrifice anything to get it (it mates)
+   * null    = clear the signal for that piece
+   */
+  setPlayerSignal(piece: PieceType, urgency: 'soft' | 'urgent' | null): void {
+    const pieceNames: Record<PieceType, string> = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen' };
+    if (urgency === null) {
+      delete this.playerSignals[piece];
+    } else {
+      this.playerSignals[piece] = urgency;
+      const delay = 800 + Math.random() * 700;
+      const message = urgency === 'urgent'
+        ? `On it!! Sac'ing for that ${pieceNames[piece]}!!`
+        : `I'll try to get you the ${pieceNames[piece]}.`;
+      setTimeout(() => {
+        if (this.status === GameStatus.IN_PROGRESS) {
+          this.sendChatMessage('Partner', message);
+        }
+      }, delay);
+    }
+  }
+
+  /** Clear all player-initiated signals */
+  clearPlayerSignals(): void {
+    this.playerSignals = {};
+  }
+
+  /**
+   * Set a player-initiated avoid signal for Partner to avoid losing a piece type.
+   * 'soft'   = try to keep the piece, reasonable effort
+   * 'urgent' = protect at ALL COSTS — losing it mates the player
+   * null     = clear the signal for that piece
+   */
+  setPlayerAvoidSignal(piece: PieceType, urgency: 'soft' | 'urgent' | null): void {
+    const pieceNames: Record<PieceType, string> = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen' };
+    if (urgency === null) {
+      delete this.playerAvoidSignals[piece];
+    } else {
+      this.playerAvoidSignals[piece] = urgency;
+      const delay = 800 + Math.random() * 700;
+      const message = urgency === 'urgent'
+        ? `I'll protect my ${pieceNames[piece]}s at all costs!`
+        : `I'll try to hold onto my ${pieceNames[piece]}s.`;
+      setTimeout(() => {
+        if (this.status === GameStatus.IN_PROGRESS) {
+          this.sendChatMessage('Partner', message);
+        }
+      }, delay);
+    }
+  }
+
+  /** Clear all player-initiated avoid signals */
+  clearPlayerAvoidSignals(): void {
+    this.playerAvoidSignals = {};
+  }
+
+  /**
    * Check if game is over due to checkmate or stalemate
    */
   private async checkGameOver(): Promise<void> {
@@ -733,12 +806,46 @@ export class BughouseGame {
 
     await engine.setPosition(fenWithHoldings, []);
 
+    // Resolve effective request: bot-generated requests + player signals (Partner bot only)
+    // Priority: urgent_avoid > urgent_attack > bot_request > soft_avoid > soft_attack
+    let effectiveRequest: { piece: PieceType; reason: string } | undefined = request;
+    let effectiveApproach: PartnerRequestApproach = this.partnerRequestApproach;
+    if (botName === 'Partner') {
+      const urgentAvoidEntry = (Object.entries(this.playerAvoidSignals) as [PieceType, 'soft' | 'urgent'][])
+        .find(([, u]) => u === 'urgent');
+      const urgentAttackEntry = (Object.entries(this.playerSignals) as [PieceType, 'soft' | 'urgent'][])
+        .find(([, u]) => u === 'urgent');
+      const softAvoidEntry = (Object.entries(this.playerAvoidSignals) as [PieceType, 'soft' | 'urgent'][])
+        .find(([, u]) => u === 'soft');
+      const softAttackEntry = (Object.entries(this.playerSignals) as [PieceType, 'soft' | 'urgent'][])
+        .find(([, u]) => u === 'soft');
+
+      if (urgentAvoidEntry) {
+        // Highest priority: protect piece at all costs (losing it mates the player)
+        effectiveRequest = { piece: urgentAvoidEntry[0], reason: 'player_avoid_urgent' };
+        effectiveApproach = 'protect-urgent';
+      } else if (urgentAttackEntry) {
+        // Sac anything to capture that piece (it mates the opponent)
+        effectiveRequest = { piece: urgentAttackEntry[0], reason: 'player_urgent' };
+        effectiveApproach = 'royal-piece';
+      } else if (!request && softAvoidEntry) {
+        // No bot request and no urgent signals: soft protect
+        effectiveRequest = { piece: softAvoidEntry[0], reason: 'player_avoid_soft' };
+        effectiveApproach = 'protect-soft';
+      } else if (!request && softAttackEntry) {
+        // No bot request and no avoid signals: soft attack
+        effectiveRequest = { piece: softAttackEntry[0], reason: 'player_soft' };
+        effectiveApproach = 'high-value';
+      }
+      // else: keep bot-generated request (request is already set)
+    }
+
     // No request - get normal best move (but still use holdings-aware position)
-    if (!request) {
+    if (!effectiveRequest) {
       return await engine.getBestMove(this.thinkingTimeMs);
     }
 
-    console.log(`[PARTNER REQUEST] ${botName} attempting to capture ${request.piece} (reason: ${request.reason})`);
+    console.log(`[PARTNER REQUEST] ${botName} attempting to capture ${effectiveRequest.piece} (reason: ${effectiveRequest.reason})`);
 
     // STEP 0: Check if we can deliver checkmate - always prioritize winning
     const currentEval = await engine.getEvaluation(12);
@@ -750,12 +857,15 @@ export class BughouseGame {
       return mateMove;
     }
 
-    // STEP 1: Look for immediate captures using high-value approach
-    console.log(`[PARTNER REQUEST] ${botName} checking for immediate capture of ${request.piece}`);
-    const capturingMove = await this.findImmediateCapture(board, engine, request.piece, request.reason, botName, fenWithHoldings);
-    if (capturingMove) {
-      console.log(`[PARTNER REQUEST] ${botName} found immediate capture of ${request.piece}: ${capturingMove.from}${capturingMove.to}`);
-      return capturingMove;
+    // STEP 1: Look for immediate captures (skip for protect-based requests — no piece to capture)
+    const isProtectRequest = effectiveRequest.reason.startsWith('player_avoid');
+    if (!isProtectRequest) {
+      console.log(`[PARTNER REQUEST] ${botName} checking for immediate capture of ${effectiveRequest.piece}`);
+      const capturingMove = await this.findImmediateCapture(board, engine, effectiveRequest.piece, effectiveRequest.reason, botName, fenWithHoldings);
+      if (capturingMove) {
+        console.log(`[PARTNER REQUEST] ${botName} found immediate capture of ${effectiveRequest.piece}: ${capturingMove.from}${capturingMove.to}`);
+        return capturingMove;
+      }
     }
     
     // Get normal best move as fallback for Step 2
@@ -764,43 +874,57 @@ export class BughouseGame {
     console.log(`[ENGINE] ${botName} normal best move:`, JSON.stringify(normalMove));
 
     // STEP 2: Use configured approach to find move toward requested piece
-    console.log(`[PARTNER REQUEST] ${botName} no immediate capture - using approach: ${this.partnerRequestApproach}`);
+    console.log(`[PARTNER REQUEST] ${botName} no immediate capture - using approach: ${effectiveApproach}`);
     
     let specialMove: any = null;
     
     try {
-      switch (this.partnerRequestApproach) {
+      switch (effectiveApproach) {
         case 'royal-piece':
           specialMove = await this.getGhostPositionMove(
-            board, engine, fenWithHoldings, request.piece, botName
+            board, engine, fenWithHoldings, effectiveRequest.piece, botName
           );
           break;
           
         case 'high-value':
           specialMove = await this.getHighValuePieceMove(
-            board, engine, fenWithHoldings, request.piece, botName
+            board, engine, fenWithHoldings, effectiveRequest.piece, botName
           );
           break;
           
         case 'proximity':
           specialMove = await this.getProximityMove(
-            board, engine, fenWithHoldings, request.piece, botName
+            board, engine, fenWithHoldings, effectiveRequest.piece, botName
+          );
+          break;
+
+        case 'protect-soft':
+          // High-value approach: piece worth 99999 — engine strongly avoids losing it
+          specialMove = await this.getHighValuePieceMove(
+            board, engine, fenWithHoldings, effectiveRequest.piece, botName
+          );
+          break;
+
+        case 'protect-urgent':
+          // Royal-piece approach: piece is pseudo-royal — engine treats losing it as checkmate
+          specialMove = await this.getGhostPositionMove(
+            board, engine, fenWithHoldings, effectiveRequest.piece, botName
           );
           break;
       }
       
       if (specialMove && specialMove.from && specialMove.to) {
-        console.log(`[PARTNER REQUEST] ${botName} playing ${this.partnerRequestApproach} move: ${specialMove.from}${specialMove.to}`);
-        console.log(`[ENGINE] ${botName} ${this.partnerRequestApproach} move:`, JSON.stringify(specialMove));
-        this.onLog?.('stall_details', `Engine (${this.partnerRequestApproach}) returned: ${JSON.stringify(specialMove)}`, botName);
+        console.log(`[PARTNER REQUEST] ${botName} playing ${effectiveApproach} move: ${specialMove.from}${specialMove.to}`);
+        console.log(`[ENGINE] ${botName} ${effectiveApproach} move:`, JSON.stringify(specialMove));
+        this.onLog?.('stall_details', `Engine (${effectiveApproach}) returned: ${JSON.stringify(specialMove)}`, botName);
         return specialMove;
       }
     } catch (error) {
-      console.error(`[PARTNER REQUEST] ${this.partnerRequestApproach} approach failed:`, error);
+      console.error(`[PARTNER REQUEST] ${effectiveApproach} approach failed:`, error);
     }
     
     // Fallback to normal move
-    console.log(`[PARTNER REQUEST] ${botName} no forcing line to ${request.piece} - playing normal move`);
+    console.log(`[PARTNER REQUEST] ${botName} no forcing line to ${effectiveRequest.piece} - playing normal move`);
     console.log(`[ENGINE] ${botName} fallback to normal move:`, JSON.stringify(normalMove));
     this.onLog?.('stall_details', `Engine (normal) returned: ${JSON.stringify(normalMove)}`, botName);
     return normalMove;

@@ -46,9 +46,26 @@ interface GameState {
   playerBlackTime: number;
   partnerWhiteTime: number;
   partnerBlackTime: number;
+
+  // Bot speed (1 = slowest / most accurate, 5 = fastest / least accurate)
+  botSpeed: number;
+
+  // Clock does not start until the player makes their first move
+  clockStarted: boolean;
+
+  // Player signals to Partner bot about which pieces to prioritize capturing
+  playerSignals: Partial<Record<PieceType, 'soft' | 'urgent'>>;
+
+  // Player signals to Partner bot about which pieces to avoid losing
+  playerAvoidSignals: Partial<Record<PieceType, 'soft' | 'urgent'>>;
   
   // Actions
   initialize: (playerBoardFen?: string, partnerBoardFen?: string) => Promise<void>;
+  setBotSpeed: (speed: number) => void;
+  setPlayerSignal: (piece: PieceType, urgency: 'soft' | 'urgent' | null) => void;
+  clearPlayerSignals: () => void;
+  setPlayerAvoidSignal: (piece: PieceType, urgency: 'soft' | 'urgent' | null) => void;
+  clearPlayerAvoidSignals: () => void;
   makeMove: (from: string, to: string, promotion?: string) => Promise<void>;
   dropPiece: (square: string, pieceType: PieceType) => Promise<void>;
   selectPiece: (pieceType: PieceType | null) => void;
@@ -92,17 +109,70 @@ export const useGameStore = create<GameState>((set, get) => ({
   partnerWhiteTime: 300000,
   partnerBlackTime: 300000,
 
+  // Bot speed: 1 = slowest (2000ms), 5 = fastest (50ms)
+  botSpeed: 3,
+
+  clockStarted: false,
+
+  playerSignals: {},
+  playerAvoidSignals: {},
+
+  setBotSpeed: (speed: number) => {
+    const clampedSpeed = Math.max(1, Math.min(5, speed));
+    set({ botSpeed: clampedSpeed });
+    const speedToMs = [2000, 1000, 500, 200, 50];
+    const ms = speedToMs[clampedSpeed - 1];
+    get().game?.setThinkingTimeMs(ms);
+  },
+
+  setPlayerSignal: (piece: PieceType, urgency: 'soft' | 'urgent' | null) => {
+    const current = get().playerSignals;
+    if (urgency === null) {
+      const updated = { ...current };
+      delete updated[piece];
+      set({ playerSignals: updated });
+    } else {
+      set({ playerSignals: { ...current, [piece]: urgency } });
+    }
+    get().game?.setPlayerSignal(piece, urgency);
+  },
+
+  clearPlayerSignals: () => {
+    set({ playerSignals: {} });
+    get().game?.clearPlayerSignals();
+  },
+
+  setPlayerAvoidSignal: (piece: PieceType, urgency: 'soft' | 'urgent' | null) => {
+    const current = get().playerAvoidSignals;
+    if (urgency === null) {
+      const updated = { ...current };
+      delete updated[piece];
+      set({ playerAvoidSignals: updated });
+    } else {
+      set({ playerAvoidSignals: { ...current, [piece]: urgency } });
+    }
+    get().game?.setPlayerAvoidSignal(piece, urgency);
+  },
+
+  clearPlayerAvoidSignals: () => {
+    set({ playerAvoidSignals: {} });
+    get().game?.clearPlayerAvoidSignals();
+  },
+
   initialize: async (playerBoardFen?: string, partnerBoardFen?: string) => {
     try {
       // Start logging
       useGameLogStore.getState().startLogging();
 
-      // Reset clocks to 5 minutes each
+      // Reset clocks to 5 minutes each and clear the started flag
       set({
         playerWhiteTime: 300000,
         playerBlackTime: 300000,
         partnerWhiteTime: 300000,
         partnerBlackTime: 300000,
+        clockStarted: false,
+        playerSignals: {},
+        playerAvoidSignals: {},
       });
 
       // Engine path relative to project root
@@ -113,7 +183,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         playerEngine: createEngine('player-engine', enginePath),
         partnerEngine1: createEngine('partner-engine-1', enginePath),
         partnerEngine2: createEngine('partner-engine-2', enginePath),
-        thinkingTimeMs: 2000, // Increased to 2 seconds to prevent timeouts
+        thinkingTimeMs: [2000, 1000, 500, 200, 50][Math.max(0, Math.min(4, get().botSpeed - 1))],
         onChatMessage: (sender, message) => {
           get().addChatMessage(sender, message);
         },
@@ -163,6 +233,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     const success = await game.makePlayerMove(from, to, promotion);
     
     if (success) {
+      if (!get().clockStarted) set({ clockStarted: true });
       get().updateBoards();
     }
   },
@@ -174,6 +245,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     const success = await game.dropPiece(square, pieceType);
     
     if (success) {
+      if (!get().clockStarted) set({ clockStarted: true });
       get().updateBoards();
     }
   },
@@ -313,9 +385,10 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   tickClock: () => {
-    const { gameStatus, playerTurn, partnerTurn, playerWhiteTime, playerBlackTime, partnerWhiteTime, partnerBlackTime, playerBoard, game } = get();
+    const { gameStatus, clockStarted, playerTurn, partnerTurn, playerWhiteTime, playerBlackTime, partnerWhiteTime, partnerBlackTime, playerBoard, game } = get();
     
     if (gameStatus !== GameStatus.IN_PROGRESS) return;
+    if (!clockStarted) return;
 
     const updates: Partial<GameState> = {};
     

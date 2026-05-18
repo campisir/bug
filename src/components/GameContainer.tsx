@@ -43,6 +43,14 @@ export function GameContainer() {
   const sendSitCommand = useGameStore((state) => state.sendSitCommand);
   const tickClock = useGameStore((state) => state.tickClock);
   const resign = useGameStore((state) => state.resign);
+  const botSpeed = useGameStore((state) => state.botSpeed);
+  const setBotSpeed = useGameStore((state) => state.setBotSpeed);
+  const playerSignals = useGameStore((state) => state.playerSignals);
+  const setPlayerSignal = useGameStore((state) => state.setPlayerSignal);
+  const clearPlayerSignals = useGameStore((state) => state.clearPlayerSignals);
+  const playerAvoidSignals = useGameStore((state) => state.playerAvoidSignals);
+  const setPlayerAvoidSignal = useGameStore((state) => state.setPlayerAvoidSignal);
+  const clearPlayerAvoidSignals = useGameStore((state) => state.clearPlayerAvoidSignals);
 
   const [showGameOver, setShowGameOver] = useState(true);
   const [showGameLog, setShowGameLog] = useState(false);
@@ -142,6 +150,20 @@ export function GameContainer() {
               ))}
             </select>
           </div>
+          <div className="speed-selector">
+            <label htmlFor="speed-slider">
+              Speed: <span className="speed-label">{['Slow', 'Normal', 'Fast', 'Blitz', 'Bullet'][botSpeed - 1]}</span>
+            </label>
+            <input
+              id="speed-slider"
+              type="range"
+              min={1}
+              max={5}
+              step={1}
+              value={botSpeed}
+              onChange={(e) => setBotSpeed(Number(e.target.value))}
+            />
+          </div>
         </div>
       </header>
 
@@ -196,6 +218,12 @@ export function GameContainer() {
                   blackPieces={playerBlackPiecePool}
                   onPieceClick={(pieceType) => selectPiece(selectedPiece === pieceType ? null : pieceType)}
                   selectedPiece={selectedPiece}
+                  signalledPieces={playerSignals}
+                  onPieceSignal={setPlayerSignal}
+                  onClearSignals={clearPlayerSignals}
+                  avoidSignalledPieces={playerAvoidSignals}
+                  onPieceAvoidSignal={setPlayerAvoidSignal}
+                  onClearAvoidSignals={clearPlayerAvoidSignals}
                 />
               )}
             </div>
@@ -393,6 +421,58 @@ export function GameContainer() {
         .position-selector select option {
           background: var(--navy);
           color: #fff;
+        }
+
+        /* ── Speed selector ─────────────────────────────────── */
+        .speed-selector {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .speed-selector label {
+          color: rgba(255,255,255,0.65);
+          font-size: 0.8rem;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          white-space: nowrap;
+          display: flex;
+          gap: 4px;
+        }
+
+        .speed-label {
+          color: var(--gold-light, #f0c040);
+          font-weight: 700;
+        }
+
+        .speed-selector input[type="range"] {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 90px;
+          height: 4px;
+          border-radius: 2px;
+          background: rgba(255,255,255,0.25);
+          outline: none;
+          cursor: pointer;
+        }
+
+        .speed-selector input[type="range"]::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 14px;
+          height: 14px;
+          border-radius: 50%;
+          background: var(--gold, #b8882e);
+          cursor: pointer;
+        }
+
+        .speed-selector input[type="range"]::-moz-range-thumb {
+          width: 14px;
+          height: 14px;
+          border-radius: 50%;
+          background: var(--gold, #b8882e);
+          cursor: pointer;
+          border: none;
         }
 
         /* ── Boards container ────────────────────────────────── */
